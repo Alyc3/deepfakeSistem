@@ -146,7 +146,22 @@ Son ocho paquetes directos: `fastapi`, `uvicorn[standard]`, `torch`,
 `python-multipart` (este último es obligatorio para recibir `multipart/form-data`).
 La descarga es grande, principalmente por PyTorch y sus bibliotecas CUDA.
 
-### 4. Arrancar el servidor
+### 4. Descargar los pesos grandes
+
+Los tres modelos de terceros (Face Swap, Difusión, Escena — ~2.7 GB en
+total) **no se versionan en git** por el límite de 100 MB por archivo de
+GitHub. Un script los descarga de sus fuentes oficiales y les aplica las
+mismas conversiones documentadas:
+
+```bash
+python scripts/fetch_models.py
+```
+
+Es idempotente: lo ya descargado no se repite. El Detector De Síntesis GAN
+(16 MB, entrenamiento propio) y el Detector Facial YuNet sí van en el
+repositorio.
+
+### 5. Arrancar el servidor
 
 ```bash
 uvicorn app.main:app --reload
