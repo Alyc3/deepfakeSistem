@@ -33,6 +33,11 @@ seguro (`torch.load` con `weights_only`); los checkpoints de terceros se
 convirtieron una única vez a archivos de solo-tensores. No hay descargas en
 tiempo de ejecución.
 
+> ⚠️ **Los tres pesos grandes no se versionan en git** (límite de 100 MB por
+> archivo de GitHub). En un clon nuevo, reconstrúyelos con
+> `python scripts/fetch_models.py` desde `backend/` — descarga de las fuentes
+> oficiales listadas abajo y aplica las mismas conversiones.
+
 ## Enlaces De Origen
 
 Procedencia exacta de cada modelo y qué transformación se le aplicó al
