@@ -170,7 +170,7 @@ uvicorn app.main:app --reload
 Queda escuchando en `http://127.0.0.1:8000`. Para exponerlo a otros equipos de
 la red, añade `--host 0.0.0.0`.
 
-### 5. Comprobar que responde
+### 6. Comprobar que responde
 
 ```bash
 curl http://127.0.0.1:8000/            # → {"status":"ok"}
