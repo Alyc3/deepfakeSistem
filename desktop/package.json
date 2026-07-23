@@ -1,0 +1,65 @@
+{
+  "name": "CertiFace-desktop",
+  "productName": "CertiFace",
+  "version": "1.0.0",
+  "description": "Laboratorio pericial de medios digitales: detección de face swap y deepfake para casos de suplantación de identidad",
+  "main": "src/main/main.js",
+  "private": true,
+  "author": "Alyce Maldonado",
+  "license": "MIT",
+  "scripts": {
+    "postinstall": "install-electron",
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:linux": "electron-builder --linux",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.CertiFace.desktop",
+    "productName": "CertiFace",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "icon": "build/icon.png",
+      "maintainer": "Alyce Maldonado"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.png"
+    }
+  }
+}

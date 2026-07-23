@@ -1,0 +1,8 @@
+{
+  "siglip_model": "google/siglip2-so400m-patch14-384",
+  "dinov2_model": "vit_large_patch14_dinov2.lvd142m",
+  "image_size": 392,
+  "lora_rank": 32,
+  "lora_alpha": 64,
+  "lora_dropout": 0.1
+}

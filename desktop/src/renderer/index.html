@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'"
+    />
+    <title>CertiFace — Peritaje de Medios Digitales</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- ============ VISTA: LANDING ============ -->
+    <section id="view-landing" class="view view-landing">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <span class="brand-name">CertiFace</span>
+          <span class="brand-tag">LAB·PERICIAL</span>
+        </div>
+        <button id="landing-enter-top" class="ghost-button" type="button">Ingresar</button>
+      </header>
+
+      <div class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Unidad de análisis forense digital · Suplantación de identidad</p>
+          <h1 class="hero-title">
+            La evidencia<br />no miente.<br />
+            <span class="hero-title-accent">El video, a veces, sí.</span>
+          </h1>
+          <p class="hero-sub">
+            CertiFace examina imágenes y videos de rostros en busca de manipulación
+            por face swap y síntesis generativa, y emite un dictamen preliminar
+            con confianza cuantificada. Todo el análisis queda registrado en el
+            equipo del perito.
+          </p>
+          <div class="hero-actions">
+            <button id="landing-enter" class="primary-button" type="button">
+              Iniciar peritaje
+            </button>
+            <button id="landing-protocol" class="ghost-button" type="button">
+              Ver protocolo
+            </button>
+          </div>
+        </div>
+
+        <div class="hero-art" aria-hidden="true">
+          <div class="specimen">
+            <img src="../../assets/sample-fake.jpg" alt="" class="specimen-img" />
+            <div class="specimen-scan"></div>
+            <div class="specimen-grain"></div>
+          </div>
+          <img src="../../assets/art/reticle.svg" alt="" class="reticle" />
+          <div class="specimen-caption">
+            <span class="mono-label">ESPÉCIMEN 06</span>
+            <span class="verdict-chip verdict-chip--fake">SINTÉTICO · GAN</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="datastrip" aria-label="Especificaciones del sistema">
+        <span>EfficientNet-B0</span>
+        <span>4,05 M parámetros</span>
+        <span>140 k rostros de entrenamiento</span>
+        <span>entrada 224×224 px</span>
+        <span>inferencia local o remota</span>
+      </div>
+
+      <div id="protocol" class="ledger">
+        <h2 class="ledger-title">Protocolo de peritaje</h2>
+
+        <div class="ledger-row">
+          <span class="ledger-index">01</span>
+          <div class="ledger-body">
+            <h3>Ingesta del material</h3>
+            <p>
+              El material cuestionado se incorpora desde el equipo del perito.
+              Se valida formato y tamaño antes de tocar la red: nada sale del
+              laboratorio sin pasar la verificación previa.
+            </p>
+          </div>
+          <span class="ledger-note mono-label">IMG · VIDEO ≤ 10 MB</span>
+        </div>
+
+        <div class="ledger-row">
+          <span class="ledger-index">02</span>
+          <div class="ledger-body">
+            <h3>Análisis por red convolucional</h3>
+            <p>
+              En video se muestrean fotogramas a intervalos regulares y cada uno
+              se examina por separado; en imagen, el examen es directo. La red
+              busca los artefactos que la síntesis facial deja en la textura.
+            </p>
+          </div>
+          <span class="ledger-note mono-label">CNN · SOFTMAX</span>
+        </div>
+
+        <div class="ledger-row">
+          <span class="ledger-index">03</span>
+          <div class="ledger-body">
+            <h3>Dictamen preliminar</h3>
+            <p>
+              El sistema emite un veredicto — auténtico o manipulado — con su
+              confianza porcentual, y lo asienta en el registro de casos del
+              equipo. El dictamen es una opinión técnica, no una prueba absoluta.
+            </p>
+          </div>
+          <span class="ledger-note mono-label">REGISTRO LOCAL</span>
+        </div>
+      </div>
+
+      <div class="scope">
+        <h2 class="ledger-title">Alcance metodológico</h2>
+        <p>
+          El modelo fue entrenado con rostros sintetizados por StyleGAN. Su
+          fiabilidad frente a otros métodos de generación —difusión, face swap
+          por herramientas comerciales recientes— no está garantizada, y ningún
+          resultado de este sistema debe presentarse como prueba concluyente por
+          sí solo. El peritaje serio declara sus límites: este es el nuestro.
+        </p>
+      </div>
+
+      <footer class="landing-footer">
+        <span class="mono-label">CertiFace v1.0.0</span>
+        <span>Autoría: Alyce Maldonado</span>
+      </footer>
+    </section>
+
+    <!-- ============ VISTA: LOGIN ============ -->
+    <section id="view-login" class="view view-login" hidden>
+      <div class="login-card">
+        <img src="../../assets/art/reticle.svg" alt="" class="login-reticle" aria-hidden="true" />
+        <p class="eyebrow">Acceso restringido · Cadena de custodia</p>
+        <h1 id="login-title" class="login-title">Identificación del perito</h1>
+        <p id="login-hint" class="login-hint">
+          Introduce tu credencial para acceder al laboratorio.
+        </p>
+
+        <form id="login-form" class="login-form">
+          <label class="field">
+            <span class="mono-label">Credencial</span>
+            <input id="login-user" class="text-input" type="text" autocomplete="username" spellcheck="false" required />
+          </label>
+          <label class="field">
+            <span class="mono-label">Clave</span>
+            <input id="login-pass" class="text-input" type="password" autocomplete="current-password" required minlength="6" />
+          </label>
+          <p id="login-error" class="login-error" hidden></p>
+          <button id="login-submit" class="primary-button" type="submit">
+            Acceder al laboratorio
+          </button>
+        </form>
+
+        <button id="login-back" class="link-button" type="button">← Volver a la portada</button>
+      </div>
+    </section>
+
+    <!-- ============ VISTA: APLICACIÓN ============ -->
+    <section id="view-app" class="view view-app" hidden>
+      <header class="appbar">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <span class="brand-name">CertiFace</span>
+        </div>
+        <div class="appbar-status">
+          <span id="status-dot" class="status-dot" data-state="unknown"></span>
+          <button id="status-text" class="link-button" type="button">Comprobando backend…</button>
+        </div>
+        <div class="appbar-user">
+          <span id="analyst-name" class="mono-label"></span>
+          <button id="settings-toggle" class="ghost-button ghost-button--sm" type="button">Backend</button>
+          <button id="logout" class="ghost-button ghost-button--sm" type="button">Cerrar sesión</button>
+        </div>
+      </header>
+
+      <main class="workbench">
+        <div id="settings-panel" class="settings-panel" hidden>
+          <label class="field">
+            <span class="mono-label">URL del backend</span>
+            <div class="settings-row">
+              <input id="api-url" class="text-input" type="text" spellcheck="false" placeholder="http://127.0.0.1:8000" />
+              <button id="settings-save" class="ghost-button" type="button">Guardar</button>
+            </div>
+          </label>
+        </div>
+
+        <section class="chamber">
+          <div class="chamber-head">
+            <h2 class="mono-label">Cámara de evidencia</h2>
+            <div class="samples">
+              <button class="link-button" type="button" data-sample="real">Muestra auténtica</button>
+              <span class="sep">·</span>
+              <button class="link-button" type="button" data-sample="fake">Muestra sintética</button>
+            </div>
+          </div>
+
+          <button id="dropzone" class="dropzone" type="button">
+            <span class="corner corner--tl"></span><span class="corner corner--tr"></span>
+            <span class="corner corner--bl"></span><span class="corner corner--br"></span>
+            <span id="dropzone-label" class="dropzone-label">
+              Deposita aquí el material cuestionado
+            </span>
+            <span class="dropzone-hint mono-label">CLIC O ARRASTRE · IMG / VIDEO · ≤ 10 MB</span>
+          </button>
+
+          <div id="preview-frame" class="preview-frame" hidden>
+            <span class="corner corner--tl"></span><span class="corner corner--tr"></span>
+            <span class="corner corner--bl"></span><span class="corner corner--br"></span>
+            <div id="preview-container" class="preview"></div>
+            <div id="scan-overlay" class="scan-overlay" hidden></div>
+          </div>
+
+          <button id="analyze" class="primary-button primary-button--wide" type="button" disabled>
+            Ejecutar análisis
+          </button>
+        </section>
+
+        <section id="result" class="dictamen" hidden>
+          <div class="dictamen-head">
+            <h2 class="mono-label">Dictamen preliminar</h2>
+            <span id="result-frames" class="mono-label" hidden></span>
+          </div>
+          <div class="dictamen-body">
+            <span id="result-stamp" class="stamp">MANIPULADO</span>
+            <div class="dictamen-data">
+              <p id="result-confidence" class="dictamen-confidence"></p>
+              <div class="confidence-track">
+                <div id="result-bar" class="confidence-bar"></div>
+              </div>
+              <p id="result-models" class="mono-label" hidden></p>
+              <p id="result-suspects" class="mono-label" hidden></p>
+              <p id="result-caveat" class="caveat" hidden></p>
+              <p class="dictamen-scope">
+                Cada detector estima por separado la probabilidad de su
+                familia de manipulación; el dictamen y su confianza los fija
+                la señal más alta (▸). Opinión técnica preliminar:
+                contrastar con otros métodos antes de concluir.
+              </p>
+            </div>
+          </div>
+          <button id="reset" class="ghost-button" type="button">Nuevo examen</button>
+        </section>
+
+        <section id="history-section" class="casefile" hidden>
+          <div class="casefile-head">
+            <h2 class="mono-label">Registro de casos</h2>
+            <button id="history-clear" class="link-button" type="button">Vaciar registro</button>
+          </div>
+          <ul id="history-list" class="casefile-list"></ul>
+        </section>
+      </main>
+    </section>
+
+    <div id="toast" class="toast" hidden></div>
+    <script src="renderer.js"></script>
+  </body>
+</html>

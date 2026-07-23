@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+backend/.venv/
+
+# Pesos grandes de modelos de terceros: superan el límite de 100 MB de
+# GitHub y son re-descargables. Se reconstruyen con:
+#   python backend/scripts/fetch_models.py
+# (El Detector De Síntesis GAN, 16 MB, es entrenamiento propio irreemplazable
+# y sí se versiona.)
+backend/models/Detector_De_Face_Swap.pth
+backend/models/Detector_De_Difusion_Facial/model.safetensors
+backend/models/Sonda_De_Escena_Generada/weights.pth
