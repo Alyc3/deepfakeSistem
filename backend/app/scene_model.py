@@ -38,7 +38,28 @@ logger = logging.getLogger("certiface.scene")
 
 _DIR = Path(__file__).resolve().parent.parent / "models" / "Sonda_De_Escena_Generada"
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# El ensemble ocupa ~2.9 GiB en fp32 más activaciones: en GPUs modestas no
+# cabe junto a los detectores por-fotograma (que tienen prioridad porque
+# corren 24 veces por video; la sonda solo 2 y solo en casos ambiguos). Se
+# usa CUDA únicamente si queda VRAM holgada; si no, CPU.
+_VRAM_NEEDED = 3.5 * 1024**3
+
+
+def _pick_device() -> torch.device:
+    if torch.cuda.is_available():
+        free, total = torch.cuda.mem_get_info()
+        if free >= _VRAM_NEEDED:
+            return torch.device("cuda")
+        logger.info(
+            "VRAM libre insuficiente para la sonda de escena "
+            "(%.1f de %.1f GiB): se queda en CPU y la GPU se reserva para "
+            "los detectores por-fotograma.",
+            free / 2**30, total / 2**30,
+        )
+    return torch.device("cpu")
+
+
+device = _pick_device()
 
 with open(_DIR / "config.json") as f:
     _CFG = json.load(f)
@@ -145,7 +166,17 @@ def _build() -> EnsembleAIDetector:
     return model
 
 
-model = _build().to(device)
+model = _build()
+try:
+    model = model.to(device)
+except torch.OutOfMemoryError:
+    # Red de seguridad: si otra carga ocupó la VRAM entre la comprobación y
+    # el traslado, se recoloca el modelo completo en CPU.
+    logger.warning("OOM al subir la sonda de escena a la GPU; se usa CPU.")
+    device = torch.device("cpu")
+    model = model.to(device)
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 model.eval()
 logger.info("Detector de escena generada (SigLIP2+DINOv2) cargado en %s", device)
 
