@@ -141,10 +141,12 @@ python3 -m venv .venv
 pip install -r requirements.txt
 ```
 
-Son ocho paquetes directos: `fastapi`, `uvicorn[standard]`, `torch`,
-`torchvision`, `efficientnet-pytorch`, `pillow`, `opencv-python-headless` y
-`python-multipart` (este último es obligatorio para recibir `multipart/form-data`).
-La descarga es grande, principalmente por PyTorch y sus bibliotecas CUDA.
+Son once paquetes directos: `fastapi`, `uvicorn[standard]`, `torch`,
+`torchvision`, `efficientnet-pytorch`, `pillow`, `opencv-python-headless`,
+`python-multipart` (obligatorio para recibir `multipart/form-data`), `timm`,
+`transformers` y `peft` (los tres últimos los usan el Detector De Face Swap,
+el Detector De Difusión Facial y la Sonda De Escena Generada). La descarga es
+grande, principalmente por PyTorch y sus bibliotecas CUDA.
 
 ### 4. Descargar los pesos grandes
 
