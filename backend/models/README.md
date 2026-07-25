@@ -68,13 +68,13 @@ flowchart TD
     E3 --> F
     F -- "Sí, con corroboración<br/>(GAN o Face Swap ≥ 0.3)" --> G[MANIPULADO]
     F -- "Sí, pero solo difusión" --> H[Sonda De Escena Generada<br/>2 encuadres completos]
-    F -- "No, y señal < 0.25" --> I[REAL]
-    F -- "No, pero señal 0.25–0.5<br/>zona gris" --> H2[Sonda De Escena Generada<br/>2 encuadres completos]
+    F -- "No supera 0.5:<br/>candidato a REAL" --> H2[Sonda De Escena Generada<br/>verificación sistemática]
     H -- "Escena > 0.5:<br/>generación global" --> G
     H -- "Rostro < 0.7 y<br/>escena < 0.3" --> I2[REAL con nota<br/>patrón de filtro]
-    H -- "Rostro ≥ 0.7 o<br/>escena no concluyente" --> J[INDICIOS]
-    H2 -- "Escena > 0.5:<br/>corrobora la señal débil" --> G
-    H2 -- "Escena baja:<br/>inconcluso" --> J2[INDICIOS<br/>señal débil]
+    H -- "Rostro ≥ 0.7 o<br/>escena no concluyente" --> J[INDICIOS<br/>filtro o face swap moderno]
+    H2 -- "Escena > 0.5:<br/>generación global" --> G
+    H2 -- "Escena ≥ 0.35 o<br/>señal facial ≥ 0.25" --> J2[INDICIOS<br/>señal débil]
+    H2 -- "Escena limpia y<br/>señal facial baja" --> I[REAL verificado]
 ```
 
 ### Paso 1 — Ingesta Y Extracción
@@ -143,15 +143,17 @@ La señal más alta de las tres decide. Sobre esa base:
    Las barreras (0.7 y 0.3) están calibradas con casos reales de ambas
    clases: el real filtrado observado da señal facial 0.55 con entorno 0.29,
    mientras que los generados y el filtro extremo dan ≥ 0.88.
-3. **Zona gris** (ninguna señal supera 0.5, pero la señal de generación —la
-   mayor entre las medianas de GAN y difusión— queda entre 0.25 y 0.5) → los
-   generadores recientes dejan firmas atenuadas en esa franja, verificado
-   empíricamente con dos videos generados (0.27 y 0.34) frente al auténtico
-   más alto observado (0.19). La Sonda De Escena Generada decide: si el
-   encuadre completo delata generación → **MANIPULADO**; si no →
-   **INDICIOS** (inconcluso) y se abre el peritaje manual en la aplicación.
-4. **Sin señal** (todo por debajo de 0.25) → **REAL**, con confianza
-   `1 − señal máxima`.
+3. **Verificación sistemática de todo candidato a REAL** → antes de
+   certificar, la Sonda De Escena Generada examina 2 encuadres completos.
+   Motivo, verificado empíricamente: un generador reciente dejó el rostro
+   casi limpio (mediana facial 0.13, por debajo del real más alto observado,
+   0.19) — la única evidencia posible estaba en el encuadre. Salidas:
+   - escena > 0.5 → **MANIPULADO** (generación global);
+   - escena ≥ 0.35, o señal facial en zona gris (0.25–0.5, donde generadores
+     recientes han puntuado 0.27 y 0.34) → **INDICIOS** y peritaje manual;
+   - escena limpia y señal facial baja → **REAL verificado**, con la lectura
+     de escena registrada como evidencia positiva (`scene_generated`).
+   En primeros planos sin entorno contrastable decide solo la señal facial.
 
 La sonda solo se paga en los casos 2 y 3 (~1 minuto extra); los veredictos
 claros no la ejecutan.

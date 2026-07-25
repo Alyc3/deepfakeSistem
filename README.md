@@ -644,16 +644,16 @@ sello **INDICIOS** en ámbar con borde discontinuo, la etiqueta «Señal de
 generación» en lugar de «Confianza», y la nota de reserva. Las condenas por
 face swap o GAN siguen saliendo como `"Fake"` pleno.
 
-**Zona gris:** un `"Real"` cuya señal de generación —la mayor entre las
-medianas de GAN y difusión, dos vías que delatan lo mismo— queda entre 0.25
-y 0.5 dispara la sonda de escena. Si el encuadre completo también delata
-generación (> 0.5), la firma débil queda corroborada y la condena es plena
-(`"Fake"`, con `models.scene_generated`); si no, el resultado queda en
-`"Suspect"` (inconcluso) y se abre el peritaje manual. El rango sale de
-datos: el material auténtico más alto observado puntúa 0.19, mientras que
-videos 100 % generados con motores recientes han puntuado 0.27 y 0.34 — el
-límite en 0.25 deja margen a ambos lados, y en esa franja el sistema nunca
-certifica nada por sí solo.
+**Verificación de todo veredicto `"Real"`:** antes de certificar, la sonda
+de escena examina el encuadre completo como segunda opinión sistemática —
+un generador reciente llegó a dejar el rostro casi limpio (señal facial
+0.13, por debajo del real más alto observado) y solo el encuadre podía
+delatarlo. Escena > 0.5 → condena plena; escena ≥ 0.35 o señal facial en
+zona gris (0.25–0.5, donde los generadores recientes han puntuado 0.27 y
+0.34) → `"Suspect"` con peritaje manual; escena limpia y señal facial baja →
+`"Real"` verificado, con la lectura registrada en
+`models.scene_generated` como evidencia positiva. En primeros planos sin
+entorno contrastable decide solo la señal facial.
 
 **Lenguaje del dictamen:** el veredicto `"Real"` se muestra como **REAL**; el
 porcentaje de confianza que lo acompaña es el que orienta la decisión del
