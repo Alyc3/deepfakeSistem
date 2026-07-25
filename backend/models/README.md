@@ -68,10 +68,11 @@ flowchart TD
     E3 --> F
     F -- "Sí, con corroboración<br/>(GAN o Face Swap ≥ 0.3)" --> G[MANIPULADO]
     F -- "Sí, pero solo difusión" --> H[Sonda De Escena Generada<br/>2 encuadres completos]
-    F -- "No, y señal < 0.3" --> I[REAL]
-    F -- "No, pero señal 0.3–0.5<br/>zona gris" --> H2[Sonda De Escena Generada<br/>2 encuadres completos]
+    F -- "No, y señal < 0.25" --> I[REAL]
+    F -- "No, pero señal 0.25–0.5<br/>zona gris" --> H2[Sonda De Escena Generada<br/>2 encuadres completos]
     H -- "Escena > 0.5:<br/>generación global" --> G
-    H -- "Escena baja:<br/>firma solo en el rostro" --> J[INDICIOS<br/>patrón de filtro]
+    H -- "Rostro < 0.7 y<br/>escena < 0.3" --> I2[REAL con nota<br/>patrón de filtro]
+    H -- "Rostro ≥ 0.7 o<br/>escena no concluyente" --> J[INDICIOS]
     H2 -- "Escena > 0.5:<br/>corrobora la señal débil" --> G
     H2 -- "Escena baja:<br/>inconcluso" --> J2[INDICIOS<br/>señal débil]
 ```
@@ -129,15 +130,27 @@ La señal más alta de las tres decide. Sobre esa base:
    conocida: los filtros de embellecimiento producen la misma firma facial
    que la generación. Se invoca la **Sonda De Escena Generada** sobre 2
    encuadres completos (solo si hay suficientes fotogramas donde el rostro no
-   domina): firma también en el entorno → **MANIPULADO** (generación global);
-   firma solo en el rostro → **INDICIOS** (patrón de filtro); sin encuadres
-   contrastables → **INDICIOS** prudente.
-3. **Zona gris** (ninguna señal supera 0.5, pero la difusión queda entre 0.3
-   y 0.5) → los generadores recientes pueden dejar firmas atenuadas en esa
-   franja, verificado empíricamente. La Sonda De Escena Generada decide: si
-   el encuadre completo delata generación → **MANIPULADO**; si no →
-   **INDICIOS** (inconcluso).
-4. **Sin señal** (todo por debajo de 0.3) → **REAL**, con confianza
+   domina), con cuatro salidas:
+   - firma también en el entorno (> 0.5) → **MANIPULADO** (generación global);
+   - señal facial **moderada** (< 0.7) y entorno **claramente limpio**
+     (< 0.3) → **REAL con nota**: patrón de filtro sobre material auténtico,
+     con la confianza apoyada en la evidencia no contaminada (el entorno);
+   - señal facial **fuerte** (≥ 0.7) o entorno no concluyente → **INDICIOS**:
+     con señal fuerte conviven el filtro extremo y el video generado,
+     indistinguibles sin revisión humana;
+   - sin encuadres contrastables → **INDICIOS** prudente.
+
+   Las barreras (0.7 y 0.3) están calibradas con casos reales de ambas
+   clases: el real filtrado observado da señal facial 0.55 con entorno 0.29,
+   mientras que los generados y el filtro extremo dan ≥ 0.88.
+3. **Zona gris** (ninguna señal supera 0.5, pero la señal de generación —la
+   mayor entre las medianas de GAN y difusión— queda entre 0.25 y 0.5) → los
+   generadores recientes dejan firmas atenuadas en esa franja, verificado
+   empíricamente con dos videos generados (0.27 y 0.34) frente al auténtico
+   más alto observado (0.19). La Sonda De Escena Generada decide: si el
+   encuadre completo delata generación → **MANIPULADO**; si no →
+   **INDICIOS** (inconcluso) y se abre el peritaje manual en la aplicación.
+4. **Sin señal** (todo por debajo de 0.25) → **REAL**, con confianza
    `1 − señal máxima`.
 
 La sonda solo se paga en los casos 2 y 3 (~1 minuto extra); los veredictos

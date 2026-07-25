@@ -509,9 +509,20 @@ button:focus-visible, input:focus-visible {
 .status-dot[data-state="checking"] { background: var(--orange-wheel); }
 
 .workbench {
-  max-width: 620px;
+  max-width: 1360px;
   margin: 0 auto;
-  padding: 32px 24px 64px;
+  padding: 28px 28px 64px;
+}
+
+.workgrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+@media (max-width: 1020px) {
+  .workgrid { grid-template-columns: 1fr; }
 }
 
 .settings-panel {
@@ -582,14 +593,25 @@ button:focus-visible, input:focus-visible {
   position: relative;
   margin-top: 18px;
   border: 1px solid var(--eerie-light);
+  background: #000;
 }
+/* El material se muestra completo, en su relación de aspecto original:
+   nada de recortes — el perito debe ver el encuadre íntegro. */
 .preview img, .preview video {
   width: 100%;
-  height: 240px;
-  object-fit: cover;
+  height: auto;
+  max-height: 62vh;
+  object-fit: contain;
   display: block;
-  background: var(--eerie);
+  background: #000;
 }
+
+.chamber-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.chamber-actions .ghost-button { width: 100%; }
 
 .scan-overlay {
   position: absolute;
@@ -608,10 +630,121 @@ button:focus-visible, input:focus-visible {
   animation: scan-sweep 1.6s ease-in-out infinite;
 }
 
+/* --- registro del análisis (columna derecha) --- */
+
+.analysis-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.analysis-log {
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  border: 1px solid var(--eerie-light);
+  border-radius: var(--radius);
+  background: var(--night);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  min-height: 120px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.log-line {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.log-time {
+  color: var(--text-dim);
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.log-marker { flex-shrink: 0; }
+
+.log-line--done .log-marker { color: var(--moss); }
+.log-line--warn .log-marker,
+.log-line--warn .log-text { color: var(--hot-orange); }
+.log-line--note .log-marker,
+.log-line--note .log-text { color: var(--orange-wheel); }
+.log-line--idle { color: var(--text-dim); }
+
+.log-line--pending .log-marker {
+  color: var(--orange-wheel);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* --- peritaje manual (checklist) --- */
+
+.checklist {
+  margin-top: 24px;
+  border: 1px solid var(--orange-wheel);
+  border-radius: var(--radius);
+  background: var(--night);
+  padding: 20px;
+}
+
+.checklist-head { margin-bottom: 8px; }
+.checklist-head .mono-label { color: var(--orange-wheel); }
+
+.checklist-hint {
+  margin: 0 0 18px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.checklist-item {
+  padding: 12px 0;
+  border-top: 1px solid var(--eerie-light);
+}
+
+.checklist-question {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.checklist-options { display: flex; gap: 8px; }
+
+.check-option {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+.check-option:hover { border-color: var(--orange-wheel); color: var(--text); }
+.check-option.selected {
+  border-color: var(--orange-wheel);
+  background: rgba(247, 126, 13, 0.12);
+  color: var(--orange-wheel);
+}
+
+.checklist-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
 /* --- dictamen --- */
 
 .dictamen {
-  margin-top: 32px;
+  margin-top: 8px;
   border: 1px solid var(--eerie-light);
   border-radius: var(--radius);
   background: var(--night);
@@ -690,8 +823,6 @@ button:focus-visible, input:focus-visible {
   font-size: 12px;
   color: var(--text-dim);
 }
-
-.dictamen > .ghost-button { margin-top: 18px; }
 
 /* --- registro de casos --- */
 

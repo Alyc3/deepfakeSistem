@@ -59,6 +59,22 @@ CAVEAT_LOCALIZED = (
     "no con video generado. Requiere revisión humana."
 )
 
+CAVEAT_FILTERED = (
+    "Se detectó señal de generación en el rostro, pero el patrón completo la "
+    "atribuye a filtros o procesado de cámara sobre material auténtico: la "
+    "señal facial es moderada, el entorno está limpio (sonda de escena) y ni "
+    "GAN ni face swap corroboran. Si el caso lo exige, verificar visualmente "
+    "la presencia de filtros."
+)
+
+# Barreras de la atribución a filtro, calibradas con casos reales de ambas
+# clases: señal facial moderada (< 0.7 — el real filtrado observado da 0.55;
+# los generados y el filtro extremo dan ≥ 0.88) y entorno claramente limpio
+# (< 0.3 — el real observado da 0.29). Con señal facial fuerte, la decisión
+# es siempre del perito humano aunque el entorno esté limpio.
+STRONG_FACE_LIMIT = 0.7
+SCENE_CLEAN_LIMIT = 0.3
+
 CAVEAT_CLOSEUP = (
     "Señal únicamente del detector de generación (difusión), y el rostro "
     "ocupa la mayor parte del encuadre, por lo que no es posible contrastar "
@@ -68,10 +84,12 @@ CAVEAT_CLOSEUP = (
 )
 
 # Zona gris: por debajo del umbral de condena (0.5) pero por encima del rango
-# observado en material auténtico limpio (≤ ~0.2). Un generador moderno puede
-# dejar una firma atenuada que cae justo aquí — verificado con un video 100 %
-# generado que puntuó 0.34. En esta franja el sistema no certifica nada.
-GRAY_LIMIT = 0.3
+# observado en material auténtico limpio. Calibrado con casos reales de ambas
+# clases: el video auténtico más alto observado da mediana de difusión 0.19,
+# mientras que videos 100 % generados con motores recientes han puntuado 0.34
+# (1.mp4) y 0.27 (Gemini) — el límite en 0.25 deja margen a ambos lados. En
+# esta franja el sistema no certifica nada: decide la sonda de escena.
+GRAY_LIMIT = 0.25
 
 CAVEAT_WEAK = (
     "Señal débil de generación: por debajo del umbral de condena, pero por "
@@ -105,7 +123,9 @@ def _scene_probe(images):
     return median(scores)
 
 
-def _resolve_reservation(label, gan_signal, swap_signal, context_images, min_eligible):
+def _resolve_reservation(
+    label, gan_signal, swap_signal, face_signal, context_images, min_eligible
+):
     """Resuelve una condena firmada solo por el detector de difusión.
 
     Un filtro de embellecimiento actúa sobre el rostro; la generación
@@ -114,10 +134,14 @@ def _resolve_reservation(label, gan_signal, swap_signal, context_images, min_eli
     fotogramas donde el rostro no domina):
 
     - firma también fuera del rostro → generación global → condena plena;
-    - firma solo en el rostro → patrón de filtro → "Suspect";
+    - señal facial moderada y entorno claramente limpio → patrón de filtro
+      sobre material auténtico → "Real" con nota de atribución;
+    - señal facial fuerte, o entorno no concluyente → "Suspect": decide el
+      perito (con señal ≥ 0.7 conviven el filtro extremo y el video
+      generado, indistinguibles sin revisión humana);
     - sin encuadres contrastables (primer plano) → "Suspect" prudente.
 
-    Devuelve (label, caveat, mediana_de_escena | None).
+    Devuelve (label, caveat, mediana_de_escena | None, confianza | None).
     """
     diffusion_only = (
         label == "Fake"
@@ -125,24 +149,31 @@ def _resolve_reservation(label, gan_signal, swap_signal, context_images, min_eli
         and swap_signal < CORROBORATION_LIMIT
     )
     if not diffusion_only:
-        return label, None, None
+        return label, None, None, None
 
     if len(context_images) >= min_eligible:
         ctx = _scene_probe(context_images)
-        logger.info(
-            "Sonda de escena (contraprueba): mediana=%.4f → %s",
-            ctx,
-            "generación global (condena plena)" if ctx > 0.5 else "firma localizada (reserva)",
-        )
         if ctx > 0.5:
-            return "Fake", None, ctx
-        return "Suspect", CAVEAT_LOCALIZED, ctx
+            outcome = "generación global (condena plena)"
+        elif ctx < SCENE_CLEAN_LIMIT and face_signal < STRONG_FACE_LIMIT:
+            outcome = "señal facial moderada con entorno limpio (filtro; Real con nota)"
+        else:
+            outcome = "firma localizada o señal fuerte (reserva)"
+        logger.info("Sonda de escena (contraprueba): mediana=%.4f → %s", ctx, outcome)
+
+        if ctx > 0.5:
+            return "Fake", None, ctx, None
+        if ctx < SCENE_CLEAN_LIMIT and face_signal < STRONG_FACE_LIMIT:
+            # La confianza se apoya en la evidencia no contaminada: el
+            # entorno. (La señal facial queda explicada por el filtro.)
+            return "Real", CAVEAT_FILTERED, ctx, round((1 - ctx) * 100, 2)
+        return "Suspect", CAVEAT_LOCALIZED, ctx, None
 
     logger.info(
         "Sonda de escena no aplicable: el rostro domina el encuadre en los "
         "fotogramas disponibles."
     )
-    return "Suspect", CAVEAT_CLOSEUP, None
+    return "Suspect", CAVEAT_CLOSEUP, None, None
 
 
 def _apply_gray_zone(label, confidence, generation_signal, probe_images):
@@ -187,12 +218,17 @@ def predict_image(image_bytes: bytes):
     context_images = (
         [image] if found and face_fraction <= CONTEXT_FACE_MAX_FRACTION else []
     )
-    label, caveat, ctx = _resolve_reservation(
-        label, p_gan, p_swap, context_images, min_eligible=1
+    label, caveat, ctx, conf_override = _resolve_reservation(
+        label, p_gan, p_swap, p_diff, context_images, min_eligible=1
     )
+    if conf_override is not None:
+        confidence = conf_override
     if not caveat and ctx is None:
+        # La señal de generación combina ambos detectores de esa familia:
+        # GAN y difusión delatan lo mismo (contenido fabricado) por vías
+        # distintas, y un generador moderno puede rozar en una y no en otra.
         label, confidence, caveat, ctx = _apply_gray_zone(
-            label, confidence, p_diff, [image]
+            label, confidence, max(p_diff, p_gan), [image]
         )
     logger.info(
         "Imagen %dx%d: rostro=%s p_gan=%.4f p_swap=%.4f p_diff=%.4f → %s (%.2f%%)%s",
@@ -267,15 +303,21 @@ def predict_video(frames):
     med_diff = median(diff_scores)
     p_fake = max(med_gan, agg_swap, med_diff)
     label, confidence = _verdict(p_fake)
-    label, caveat, ctx = _resolve_reservation(
-        label, med_gan, agg_swap, context_candidates, min_eligible=CONTEXT_MIN_FRAMES
+    label, caveat, ctx, conf_override = _resolve_reservation(
+        label, med_gan, agg_swap, med_diff, context_candidates,
+        min_eligible=CONTEXT_MIN_FRAMES,
     )
+    if conf_override is not None:
+        confidence = conf_override
     if not caveat and ctx is None:
         # Para la zona gris se prefieren encuadres donde el rostro no domina;
-        # si no los hay (primer plano), se sondea el encuadre tal cual.
+        # si no los hay (primer plano), se sondea el encuadre tal cual. La
+        # señal de generación combina GAN y difusión: ambos delatan contenido
+        # fabricado por vías distintas y un generador moderno puede rozar en
+        # una y no en la otra.
         probe_images = context_candidates or [frame for frame, _ts in frames]
         label, confidence, caveat, ctx = _apply_gray_zone(
-            label, confidence, med_diff, probe_images
+            label, confidence, max(med_diff, med_gan), probe_images
         )
 
     logger.info(

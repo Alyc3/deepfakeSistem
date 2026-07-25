@@ -184,70 +184,104 @@
           </label>
         </div>
 
-        <section class="chamber">
-          <div class="chamber-head">
-            <h2 class="mono-label">Cámara de evidencia</h2>
-            <div class="samples">
-              <button class="link-button" type="button" data-sample="real">Muestra auténtica</button>
-              <span class="sep">·</span>
-              <button class="link-button" type="button" data-sample="fake">Muestra sintética</button>
-            </div>
-          </div>
-
-          <button id="dropzone" class="dropzone" type="button">
-            <span class="corner corner--tl"></span><span class="corner corner--tr"></span>
-            <span class="corner corner--bl"></span><span class="corner corner--br"></span>
-            <span id="dropzone-label" class="dropzone-label">
-              Deposita aquí el material cuestionado
-            </span>
-            <span class="dropzone-hint mono-label">CLIC O ARRASTRE · IMG / VIDEO · ≤ 10 MB</span>
-          </button>
-
-          <div id="preview-frame" class="preview-frame" hidden>
-            <span class="corner corner--tl"></span><span class="corner corner--tr"></span>
-            <span class="corner corner--bl"></span><span class="corner corner--br"></span>
-            <div id="preview-container" class="preview"></div>
-            <div id="scan-overlay" class="scan-overlay" hidden></div>
-          </div>
-
-          <button id="analyze" class="primary-button primary-button--wide" type="button" disabled>
-            Ejecutar análisis
-          </button>
-        </section>
-
-        <section id="result" class="dictamen" hidden>
-          <div class="dictamen-head">
-            <h2 class="mono-label">Dictamen preliminar</h2>
-            <span id="result-frames" class="mono-label" hidden></span>
-          </div>
-          <div class="dictamen-body">
-            <span id="result-stamp" class="stamp">MANIPULADO</span>
-            <div class="dictamen-data">
-              <p id="result-confidence" class="dictamen-confidence"></p>
-              <div class="confidence-track">
-                <div id="result-bar" class="confidence-bar"></div>
+        <div class="workgrid">
+          <!-- Columna izquierda: evidencia y controles -->
+          <section class="chamber">
+            <div class="chamber-head">
+              <h2 class="mono-label">Cámara de evidencia</h2>
+              <div class="samples">
+                <button class="link-button" type="button" data-sample="real">Muestra auténtica</button>
+                <span class="sep">·</span>
+                <button class="link-button" type="button" data-sample="fake">Muestra sintética</button>
               </div>
-              <p id="result-models" class="mono-label" hidden></p>
-              <p id="result-suspects" class="mono-label" hidden></p>
-              <p id="result-caveat" class="caveat" hidden></p>
-              <p class="dictamen-scope">
-                Cada detector estima por separado la probabilidad de su
-                familia de manipulación; el dictamen y su confianza los fija
-                la señal más alta (▸). Opinión técnica preliminar:
-                contrastar con otros métodos antes de concluir.
-              </p>
             </div>
-          </div>
-          <button id="reset" class="ghost-button" type="button">Nuevo examen</button>
-        </section>
 
-        <section id="history-section" class="casefile" hidden>
-          <div class="casefile-head">
-            <h2 class="mono-label">Registro de casos</h2>
-            <button id="history-clear" class="link-button" type="button">Vaciar registro</button>
-          </div>
-          <ul id="history-list" class="casefile-list"></ul>
-        </section>
+            <button id="dropzone" class="dropzone" type="button">
+              <span class="corner corner--tl"></span><span class="corner corner--tr"></span>
+              <span class="corner corner--bl"></span><span class="corner corner--br"></span>
+              <span id="dropzone-label" class="dropzone-label">
+                Deposita aquí el material cuestionado
+              </span>
+              <span class="dropzone-hint mono-label">CLIC O ARRASTRE · IMG / VIDEO · ≤ 10 MB</span>
+            </button>
+
+            <div id="preview-frame" class="preview-frame" hidden>
+              <span class="corner corner--tl"></span><span class="corner corner--tr"></span>
+              <span class="corner corner--bl"></span><span class="corner corner--br"></span>
+              <div id="preview-container" class="preview"></div>
+              <div id="scan-overlay" class="scan-overlay" hidden></div>
+            </div>
+
+            <div class="chamber-actions">
+              <button id="analyze" class="primary-button primary-button--wide" type="button" disabled>
+                Ejecutar análisis
+              </button>
+              <button id="reset" class="ghost-button" type="button" hidden>Nuevo examen</button>
+            </div>
+
+            <section id="history-section" class="casefile" hidden>
+              <div class="casefile-head">
+                <h2 class="mono-label">Registro de casos</h2>
+                <button id="history-clear" class="link-button" type="button">Vaciar registro</button>
+              </div>
+              <ul id="history-list" class="casefile-list"></ul>
+            </section>
+          </section>
+
+          <!-- Columna derecha: traza del análisis, dictamen y peritaje manual -->
+          <section class="analysis">
+            <div class="analysis-head">
+              <h2 class="mono-label">Registro del análisis</h2>
+              <span id="analysis-elapsed" class="mono-label" hidden></span>
+            </div>
+            <ol id="analysis-log" class="analysis-log" aria-live="polite">
+              <li class="log-line log-line--idle">A la espera de material…</li>
+            </ol>
+
+            <section id="result" class="dictamen" hidden>
+              <div class="dictamen-head">
+                <h2 id="result-title" class="mono-label">Dictamen preliminar</h2>
+                <span id="result-frames" class="mono-label" hidden></span>
+              </div>
+              <div class="dictamen-body">
+                <span id="result-stamp" class="stamp">MANIPULADO</span>
+                <div class="dictamen-data">
+                  <p id="result-confidence" class="dictamen-confidence"></p>
+                  <div class="confidence-track">
+                    <div id="result-bar" class="confidence-bar"></div>
+                  </div>
+                  <p id="result-models" class="mono-label" hidden></p>
+                  <p id="result-suspects" class="mono-label" hidden></p>
+                  <p id="result-caveat" class="caveat" hidden></p>
+                  <p class="dictamen-scope">
+                    Cada detector estima por separado la probabilidad de su
+                    familia de manipulación; el dictamen y su confianza los fija
+                    la señal más alta (▸). Opinión técnica preliminar:
+                    contrastar con otros métodos antes de concluir.
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            <section id="checklist" class="checklist" hidden>
+              <div class="checklist-head">
+                <h2 class="mono-label">Peritaje manual — resolver indicios</h2>
+              </div>
+              <p class="checklist-hint">
+                Los modelos no alcanzan un veredicto concluyente. Revisa el
+                material en la cámara de evidencia y responde: el dictamen
+                final combinará estas observaciones con las métricas.
+              </p>
+              <div id="checklist-items" class="checklist-items"></div>
+              <div class="checklist-footer">
+                <span id="checklist-score" class="mono-label"></span>
+                <button id="checklist-submit" class="primary-button" type="button" disabled>
+                  Emitir dictamen final
+                </button>
+              </div>
+            </section>
+          </section>
+        </div>
       </main>
     </section>
 
