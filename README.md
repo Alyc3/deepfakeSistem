@@ -215,12 +215,24 @@ guardada entre sesiones: **no hay archivos `.env`**.
 1. En la landing, pulsa **Iniciar peritaje**. La primera vez se registra el
    perfil del perito (credencial + clave de al menos 6 caracteres, guardadas
    solo en este equipo con hash scrypt); las siguientes veces se inicia sesión.
-2. En el laboratorio, arrastra un archivo a la cámara de evidencia, haz clic
-   para abrir el diálogo del sistema, o usa las muestras de ejemplo.
+2. El laboratorio es un panel doble: a la **izquierda**, la cámara de
+   evidencia con el material completo en su formato original (sin recortes),
+   los controles y el registro de casos; a la **derecha**, el registro del
+   análisis paso a paso y el dictamen. Arrastra un archivo, haz clic para
+   abrir el diálogo del sistema, o usa las muestras de ejemplo.
 3. Pulsa **Ejecutar análisis**. Durante la inferencia, una línea de barrido
-   recorre la vista previa.
-4. El dictamen aparece como sello — **MANIPULADO** en naranja o **AUTÉNTICO**
-   en moss — con su confianza y, en videos, los fotogramas analizados.
+   recorre la vista previa y el registro muestra el progreso; al terminar,
+   despliega cada etapa con sus datos reales — fotogramas, rostros, la señal
+   de cada detector, los momentos sospechosos — y cierra con el dictamen.
+4. El dictamen aparece como sello — **MANIPULADO** en naranja, **REAL** en
+   moss o **INDICIOS** en ámbar — con su confianza y el desglose por modelo.
+5. Si el dictamen queda en **INDICIOS**, se abre el **peritaje manual**: un
+   checklist de seis observaciones (bordes del rostro, naturalidad de gestos,
+   coherencia de iluminación, filtros, momentos sospechosos, origen del
+   material) que respondes mirando la evidencia a la izquierda. Al emitir, el
+   dictamen final combina tus respuestas con la señal de los modelos —la
+   señal fuerte pesa doble— y queda asentado en el registro de casos como
+   entrada de peritaje. Un empate técnico mantiene los INDICIOS.
 
 El punto de color de la barra superior indica el estado del backend: moss en
 línea, naranja fuera de línea, ámbar comprobando. Clic sobre el texto para
@@ -632,14 +644,16 @@ sello **INDICIOS** en ámbar con borde discontinuo, la etiqueta «Señal de
 generación» en lugar de «Confianza», y la nota de reserva. Las condenas por
 face swap o GAN siguen saliendo como `"Fake"` pleno.
 
-**Zona gris:** un `"Real"` cuya señal de generación queda entre 0.3 y 0.5
-dispara la sonda de escena. Si el encuadre completo también delata generación
-(> 0.5), la firma débil queda corroborada y la condena es plena (`"Fake"`,
-con `models.scene_generated`); si no, el resultado queda en `"Suspect"`
-(inconcluso). El rango sale de datos: el material auténtico limpio observado
-puntúa ≤ ~0.2, pero un video 100 % generado con un generador reciente llegó a
-puntuar solo 0.34 — en esa franja el sistema nunca certifica nada por sí
-solo.
+**Zona gris:** un `"Real"` cuya señal de generación —la mayor entre las
+medianas de GAN y difusión, dos vías que delatan lo mismo— queda entre 0.25
+y 0.5 dispara la sonda de escena. Si el encuadre completo también delata
+generación (> 0.5), la firma débil queda corroborada y la condena es plena
+(`"Fake"`, con `models.scene_generated`); si no, el resultado queda en
+`"Suspect"` (inconcluso) y se abre el peritaje manual. El rango sale de
+datos: el material auténtico más alto observado puntúa 0.19, mientras que
+videos 100 % generados con motores recientes han puntuado 0.27 y 0.34 — el
+límite en 0.25 deja margen a ambos lados, y en esa franja el sistema nunca
+certifica nada por sí solo.
 
 **Lenguaje del dictamen:** el veredicto `"Real"` se muestra como **REAL**; el
 porcentaje de confianza que lo acompaña es el que orienta la decisión del

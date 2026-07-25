@@ -28,8 +28,8 @@ function assetPath(name) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1100,
-    height: 800,
+    width: 1320,
+    height: 880,
     minWidth: 720,
     minHeight: 640,
     show: false,

@@ -42,6 +42,13 @@ const el = {
   resultModels: document.getElementById("result-models"),
   resultSuspects: document.getElementById("result-suspects"),
   resultCaveat: document.getElementById("result-caveat"),
+  resultTitle: document.getElementById("result-title"),
+  analysisLog: document.getElementById("analysis-log"),
+  analysisElapsed: document.getElementById("analysis-elapsed"),
+  checklist: document.getElementById("checklist"),
+  checklistItems: document.getElementById("checklist-items"),
+  checklistScore: document.getElementById("checklist-score"),
+  checklistSubmit: document.getElementById("checklist-submit"),
   resultBar: document.getElementById("result-bar"),
   resultFrames: document.getElementById("result-frames"),
   reset: document.getElementById("reset"),
@@ -56,6 +63,8 @@ const state = {
   loading: false,
   settings: { apiUrl: "http://127.0.0.1:8000", history: [] },
   auth: { registered: false, loggedIn: false, analyst: null },
+  lastResult: null,
+  checklistAnswers: {},
 };
 
 let toastTimer = null;
@@ -67,6 +76,77 @@ function showToast(message) {
   toastTimer = setTimeout(() => {
     el.toast.hidden = true;
   }, 3500);
+}
+
+/* ---------- registro del análisis (log paso a paso) ---------- */
+
+let pendingLine = null;
+let elapsedTimer = null;
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function clearLog(placeholder = "A la espera de material…") {
+  stopPending();
+  el.analysisLog.replaceChildren();
+  if (placeholder) {
+    const li = document.createElement("li");
+    li.className = "log-line log-line--idle";
+    li.textContent = placeholder;
+    el.analysisLog.appendChild(li);
+  }
+  el.analysisElapsed.hidden = true;
+}
+
+function addLog(text, status = "done") {
+  const idle = el.analysisLog.querySelector(".log-line--idle");
+  if (idle) idle.remove();
+
+  const li = document.createElement("li");
+  li.className = `log-line log-line--${status}`;
+
+  const time = document.createElement("span");
+  time.className = "log-time";
+  time.textContent = new Date().toLocaleTimeString();
+
+  const marker = document.createElement("span");
+  marker.className = "log-marker";
+  marker.textContent = { done: "✓", pending: "◌", warn: "✗", note: "▸" }[status] || "·";
+
+  const body = document.createElement("span");
+  body.className = "log-text";
+  body.textContent = text;
+
+  li.append(time, marker, body);
+  el.analysisLog.appendChild(li);
+  el.analysisLog.scrollTop = el.analysisLog.scrollHeight;
+  return li;
+}
+
+function startPending(text) {
+  stopPending();
+  pendingLine = addLog(`${text}…`, "pending");
+  const started = Date.now();
+  el.analysisElapsed.hidden = false;
+  elapsedTimer = setInterval(() => {
+    const s = Math.floor((Date.now() - started) / 1000);
+    el.analysisElapsed.textContent = `${s}s`;
+    pendingLine.querySelector(".log-text").textContent = `${text}… (${s}s)`;
+  }, 1000);
+}
+
+function stopPending(finalText = null) {
+  clearInterval(elapsedTimer);
+  elapsedTimer = null;
+  if (pendingLine) {
+    if (finalText === null) {
+      pendingLine.remove();
+    } else {
+      pendingLine.className = "log-line log-line--done";
+      pendingLine.querySelector(".log-marker").textContent = "✓";
+      pendingLine.querySelector(".log-text").textContent = finalText;
+    }
+    pendingLine = null;
+  }
 }
 
 /* ---------- enrutador de vistas ---------- */
@@ -214,6 +294,7 @@ function setFile(file) {
   el.analyze.disabled = !file || state.loading;
   el.analyze.textContent =
     file?.kind === "video" ? "Ejecutar análisis de video" : "Ejecutar análisis";
+  el.reset.hidden = !file;
   renderPreview(file);
 }
 
@@ -224,6 +305,7 @@ function handlePrepared(response) {
     return;
   }
   clearResult();
+  clearLog("Material cargado. Ejecuta el análisis cuando estés listo.");
   setFile(response.file);
 }
 
@@ -239,10 +321,17 @@ function clearResult() {
   el.result.hidden = true;
   el.resultFrames.hidden = true;
   el.resultBar.style.width = "0%";
+  el.checklist.hidden = true;
+  el.checklistItems.replaceChildren();
+  el.checklistScore.textContent = "";
+  el.checklistSubmit.disabled = true;
+  state.lastResult = null;
+  state.checklistAnswers = {};
 }
 
 function resetAll() {
   clearResult();
+  clearLog();
   setFile(null);
 }
 
@@ -264,19 +353,39 @@ async function analyze() {
 
   setLoading(true);
   clearResult();
+  clearLog(null);
 
+  const kb = (state.file.size / 1024).toFixed(0);
+  addLog(`Material validado: ${state.file.name} (${state.file.kind}, ${kb} KB)`);
+  addLog(`Enviado al backend ${state.settings.apiUrl}`);
+  startPending(
+    state.file.kind === "video"
+      ? "Análisis en curso: extracción, rostros y peritos por fotograma"
+      : "Análisis en curso"
+  );
+
+  const started = Date.now();
   const response = await window.api.predict(state.settings.apiUrl, state.file.path);
+  const elapsed = ((Date.now() - started) / 1000).toFixed(0);
 
   setLoading(false);
 
   if (!response.ok) {
+    stopPending();
+    addLog(response.error, "warn");
     setStatus("offline", "Backend fuera de línea — clic para reintentar");
     showToast(response.error);
     return;
   }
 
+  stopPending(`Análisis completado en ${elapsed}s`);
   setStatus("online", `Backend en línea · ${state.settings.apiUrl}`);
+
+  await renderAnalysisSteps(response.result);
   renderResult(response.result);
+  if (response.result.prediction === "Suspect") {
+    showChecklist(response.result);
+  }
 
   state.settings.history = await window.api.addHistory({
     name: state.file.name,
@@ -285,6 +394,77 @@ async function analyze() {
     kind: state.file.kind,
   });
   renderHistory();
+}
+
+/* Despliega en el log, con los datos reales de la respuesta, cada etapa del
+   procedimiento pericial. El escalonado es solo de lectura: los datos ya
+   están calculados. */
+async function renderAnalysisSteps(result) {
+  const STEP = 220;
+  const pct = (v) => `${(v * 100).toFixed(1)}%`;
+
+  if (result.frames_analyzed) {
+    addLog(`Fotogramas extraídos: ${result.frames_analyzed}, repartidos por toda la línea de tiempo`);
+    await wait(STEP);
+    const status = result.faces_detected === 0 ? "warn" : "done";
+    addLog(
+      `Detección facial (YuNet): rostro en ${result.faces_detected} de ${result.frames_analyzed} fotogramas`,
+      status
+    );
+    await wait(STEP);
+    if (result.frame_scores?.length) {
+      const min = Math.min(...result.frame_scores);
+      const max = Math.max(...result.frame_scores);
+      addLog(`Señal por fotograma: mín ${pct(min)} · máx ${pct(max)}`);
+      await wait(STEP);
+    }
+  } else {
+    addLog(
+      `Detección facial (YuNet): ${result.faces_detected ? "rostro localizado y recortado" : "sin rostro detectable"}`,
+      result.faces_detected ? "done" : "warn"
+    );
+    await wait(STEP);
+  }
+
+  const m = result.models || {};
+  const modelSteps = [
+    ["synthesis_gan", "Detector De Síntesis GAN"],
+    ["faceswap_dfdc", "Detector De Face Swap"],
+    ["diffusion_modern", "Detector De Difusión Facial"],
+    ["scene_generated", "Sonda De Escena Generada"],
+  ];
+  for (const [key, name] of modelSteps) {
+    if (m[key] === undefined) continue;
+    addLog(`${name}: señal ${pct(m[key])}`, m[key] > 0.5 ? "note" : "done");
+    await wait(STEP);
+  }
+
+  const suspects = result.suspicious_seconds || [];
+  if (result.frames_analyzed) {
+    addLog(
+      suspects.length
+        ? `Momentos sospechosos: ${suspects.map((s) => `${s.second}s`).join(" · ")}`
+        : "Sin momentos sospechosos señalados",
+      suspects.length ? "note" : "done"
+    );
+    await wait(STEP);
+  }
+
+  if (result.caveat) {
+    addLog(
+      result.prediction === "Suspect"
+        ? "Dictamen con reserva: revisar el peritaje manual"
+        : "Nota del dictamen: señal facial atribuida a filtros o procesado de cámara",
+      "note"
+    );
+    await wait(STEP);
+  }
+
+  const verdict = VERDICTS[result.prediction] || VERDICTS.Real;
+  addLog(
+    `Dictamen: ${verdict.stamp} (${result.confidence}%)`,
+    result.prediction === "Fake" ? "warn" : result.prediction === "Suspect" ? "note" : "done"
+  );
 }
 
 const VERDICTS = {
@@ -297,6 +477,8 @@ const VERDICTS = {
 
 function renderResult(result) {
   // El backend responde "Real", "Fake" o "Suspect" (backend/app/model.py).
+  state.lastResult = result;
+  el.resultTitle.textContent = "Dictamen preliminar";
   const verdict = VERDICTS[result.prediction] || VERDICTS.Real;
   el.result.dataset.verdict = verdict.key;
   el.resultStamp.textContent = verdict.stamp;
@@ -359,6 +541,150 @@ function renderResult(result) {
   }
 
   el.result.hidden = false;
+}
+
+/* ---------- peritaje manual: checklist para resolver INDICIOS ---------- */
+
+// Cada pregunta declara qué respuesta apunta a manipulación. "No concluyente"
+// no suma en ninguna dirección.
+const CHECKLIST_ITEMS = [
+  {
+    id: "bordes",
+    text: "¿Los bordes del rostro (mandíbula, línea del pelo, orejas) muestran transiciones extrañas, dobles contornos o parpadeos?",
+    fakeAnswer: "si",
+  },
+  {
+    id: "gestos",
+    text: "¿El parpadeo, la mirada, los dientes y las manos se comportan con naturalidad?",
+    fakeAnswer: "no",
+  },
+  {
+    id: "luz",
+    text: "¿La iluminación y las sombras del rostro son coherentes con el resto de la escena?",
+    fakeAnswer: "no",
+  },
+  {
+    id: "filtros",
+    text: "¿Se aprecian filtros de embellecimiento o procesado de cámara evidentes (piel uniformemente alisada)? Un filtro explica la señal de generación en material auténtico.",
+    fakeAnswer: "no",
+  },
+  {
+    id: "momentos",
+    text: "¿Los momentos sospechosos señalados en el registro (si los hay) muestran artefactos visibles al revisarlos a mano en el reproductor?",
+    fakeAnswer: "si",
+  },
+  {
+    id: "origen",
+    text: "¿El origen del material es verificable (fuente conocida, cadena de custodia)?",
+    fakeAnswer: "no",
+  },
+];
+
+const ANSWER_LABELS = { si: "Sí", no: "No", nc: "No concluyente" };
+
+function showChecklist(result) {
+  state.checklistAnswers = {};
+  el.checklistItems.replaceChildren();
+
+  for (const item of CHECKLIST_ITEMS) {
+    const wrap = document.createElement("div");
+    wrap.className = "checklist-item";
+
+    const q = document.createElement("p");
+    q.className = "checklist-question";
+    q.textContent = item.text;
+
+    const options = document.createElement("div");
+    options.className = "checklist-options";
+    for (const value of ["si", "no", "nc"]) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "check-option";
+      btn.textContent = ANSWER_LABELS[value];
+      btn.addEventListener("click", () => {
+        state.checklistAnswers[item.id] = value;
+        for (const sibling of options.children) sibling.classList.remove("selected");
+        btn.classList.add("selected");
+        updateChecklistScore();
+      });
+      options.appendChild(btn);
+    }
+
+    wrap.append(q, options);
+    el.checklistItems.appendChild(wrap);
+  }
+
+  el.checklist.hidden = false;
+  updateChecklistScore();
+}
+
+function computeChecklistScores() {
+  // La señal de los modelos entra en el cómputo: fuerte (≥50 %) pesa doble.
+  const modelPoints = (state.lastResult?.confidence ?? 0) >= 50 ? 2 : 1;
+  let fake = modelPoints;
+  let real = 0;
+  for (const item of CHECKLIST_ITEMS) {
+    const answer = state.checklistAnswers[item.id];
+    if (!answer || answer === "nc") continue;
+    if (answer === item.fakeAnswer) fake += 1;
+    else real += 1;
+  }
+  return { fake, real, modelPoints };
+}
+
+function updateChecklistScore() {
+  const answered = CHECKLIST_ITEMS.filter((i) => state.checklistAnswers[i.id]).length;
+  const { fake, real, modelPoints } = computeChecklistScores();
+  el.checklistScore.textContent =
+    `${answered}/${CHECKLIST_ITEMS.length} RESPONDIDAS · ` +
+    `MANIPULACIÓN ${fake} (MODELOS ${modelPoints}) · AUTENTICIDAD ${real}`;
+  el.checklistSubmit.disabled = answered < CHECKLIST_ITEMS.length;
+}
+
+function emitFinalVerdict() {
+  if (!state.lastResult) return;
+  const { fake, real } = computeChecklistScores();
+
+  if (fake === real) {
+    addLog(
+      `Peritaje manual: empate técnico (${fake} · ${real}); los indicios se mantienen — amplía la revisión o incorpora más material`,
+      "note"
+    );
+    showToast("Empate técnico: el dictamen se mantiene en INDICIOS.");
+    return;
+  }
+
+  const final = fake > real ? "Fake" : "Real";
+  const verdict = VERDICTS[final];
+
+  el.resultTitle.textContent = "Dictamen final del perito";
+  el.result.dataset.verdict = verdict.key;
+  el.resultStamp.textContent = verdict.stamp;
+  el.resultConfidence.textContent =
+    `Dictamen combinado · señal de modelos ${state.lastResult.confidence}%`;
+  el.resultCaveat.textContent =
+    `Resolución del peritaje manual: ${fake} puntos de manipulación frente a ` +
+    `${real} de autenticidad (los modelos aportan la señal inicial). Este ` +
+    `dictamen combina las métricas con la observación directa del perito.`;
+  el.resultCaveat.hidden = false;
+  el.checklist.hidden = true;
+
+  addLog(
+    `Dictamen final del perito: ${verdict.stamp} (manipulación ${fake} · autenticidad ${real})`,
+    final === "Fake" ? "warn" : "done"
+  );
+
+  window.api
+    .addHistory({
+      name: `${state.file?.name || "material"} · peritaje`,
+      prediction: final,
+      confidence: state.lastResult.confidence,
+      kind: state.file?.kind || "image",
+    })
+    .then((history) => {
+      state.settings.history = history;
+      renderHistory();
+    });
 }
 
 /* ---------- registro de casos ---------- */
@@ -459,6 +785,7 @@ function wireEvents() {
   el.dropzone.addEventListener("click", openFileDialog);
   el.analyze.addEventListener("click", analyze);
   el.reset.addEventListener("click", resetAll);
+  el.checklistSubmit.addEventListener("click", emitFinalVerdict);
   el.historyClear.addEventListener("click", clearHistory);
   el.settingsToggle.addEventListener("click", () => toggleSettings());
   el.settingsSave.addEventListener("click", saveApiUrl);
