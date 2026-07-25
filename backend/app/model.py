@@ -53,10 +53,12 @@ CONTEXT_FACE_MAX_FRACTION = 0.5
 CONTEXT_MIN_FRAMES = 6
 
 CAVEAT_LOCALIZED = (
-    "La firma de generación aparece en el rostro pero no en el resto del "
-    "encuadre (contraprueba de contexto negativa): patrón compatible con "
-    "filtros de embellecimiento o procesado de cámara sobre video auténtico, "
-    "no con video generado. Requiere revisión humana."
+    "Firma de generación fuerte en el rostro pero no en el resto del "
+    "encuadre. Este patrón tiene dos explicaciones incompatibles que las "
+    "métricas no pueden separar: filtros de embellecimiento intensos sobre "
+    "video auténtico, o un face swap de generación moderna (rostro generado "
+    "insertado en escena real). Requiere revisión humana: examinar bordes "
+    "del rostro, transiciones y coherencia de identidad."
 )
 
 CAVEAT_FILTERED = (
@@ -90,6 +92,12 @@ CAVEAT_CLOSEUP = (
 # (1.mp4) y 0.27 (Gemini) — el límite en 0.25 deja margen a ambos lados. En
 # esta franja el sistema no certifica nada: decide la sonda de escena.
 GRAY_LIMIT = 0.25
+
+# Verificación de escena para veredictos "Real": por encima de este valor el
+# entorno se considera no concluyente y el veredicto baja a "Suspect". Las
+# escenas de video auténtico observadas puntúan 0.25-0.29; el margen hasta
+# 0.35 absorbe ese ruido.
+SCENE_SUSPECT_LIMIT = 0.35
 
 CAVEAT_WEAK = (
     "Señal débil de generación: por debajo del umbral de condena, pero por "
@@ -176,27 +184,50 @@ def _resolve_reservation(
     return "Suspect", CAVEAT_CLOSEUP, None, None
 
 
-def _apply_gray_zone(label, confidence, generation_signal, probe_images):
-    """Resuelve un "Real" cuya señal de generación cae en la zona gris.
+def _verify_real(label, confidence, generation_signal, probe_images):
+    """Verificación final de todo veredicto "Real" con la sonda de escena.
 
-    La sonda de escena decide: si el encuadre completo también delata
-    generación (> 0.5), la firma débil del rostro queda corroborada y la
-    condena es plena; si no, el resultado queda inconcluso ("Suspect") — el
-    sistema no certifica autenticidad con una señal sin explicar.
+    Motivo, verificado empíricamente: los generadores más recientes pueden
+    dejar el rostro casi limpio (mediana facial 0.13 en un video 100 %
+    generado, por debajo del real más alto observado), de modo que la única
+    evidencia disponible es el encuadre completo. La sonda actúa como
+    segunda opinión sistemática antes de certificar:
+
+    - escena > 0.5 → generación global → condena plena;
+    - escena ≥ 0.35, o señal facial en zona gris (≥ 0.25) → "Suspect";
+    - escena limpia y señal facial baja → "Real" verificado (la lectura de
+      escena queda registrada en la respuesta como evidencia positiva).
+
     Devuelve (label, confidence, caveat, mediana_de_escena | None).
     """
-    if label == "Real" and generation_signal >= GRAY_LIMIT:
-        scene = _scene_probe(probe_images)
-        if scene is not None:
-            logger.info(
-                "Sonda de escena (zona gris): mediana=%.4f → %s",
-                scene,
-                "generación corroborada (condena plena)" if scene > 0.5 else "inconcluso",
-            )
-            if scene > 0.5:
-                return "Fake", round(scene * 100, 2), None, scene
-        return "Suspect", round(generation_signal * 100, 2), CAVEAT_WEAK, scene
-    return label, confidence, None, None
+    if label != "Real":
+        return label, confidence, None, None
+
+    scene = _scene_probe(probe_images) if probe_images else None
+
+    if scene is not None:
+        if scene > 0.5:
+            outcome = "generación global (condena plena)"
+        elif scene >= SCENE_SUSPECT_LIMIT or generation_signal >= GRAY_LIMIT:
+            outcome = "no concluyente (inconcluso)"
+        else:
+            outcome = "entorno limpio (Real verificado)"
+        logger.info(
+            "Sonda de escena (verificación de Real): mediana=%.4f → %s",
+            scene, outcome,
+        )
+        if scene > 0.5:
+            return "Fake", round(scene * 100, 2), None, scene
+        if scene >= SCENE_SUSPECT_LIMIT or generation_signal >= GRAY_LIMIT:
+            signal = max(scene, generation_signal)
+            return "Suspect", round(signal * 100, 2), CAVEAT_WEAK, scene
+        return "Real", confidence, None, scene
+
+    # Sin encuadres sondeables (primer plano): solo la señal facial decide
+    # si el resultado es certificable o queda inconcluso.
+    if generation_signal >= GRAY_LIMIT:
+        return "Suspect", round(generation_signal * 100, 2), CAVEAT_WEAK, None
+    return "Real", confidence, None, None
 
 
 def predict_image(image_bytes: bytes):
@@ -227,8 +258,8 @@ def predict_image(image_bytes: bytes):
         # La señal de generación combina ambos detectores de esa familia:
         # GAN y difusión delatan lo mismo (contenido fabricado) por vías
         # distintas, y un generador moderno puede rozar en una y no en otra.
-        label, confidence, caveat, ctx = _apply_gray_zone(
-            label, confidence, max(p_diff, p_gan), [image]
+        label, confidence, caveat, ctx = _verify_real(
+            label, confidence, max(p_diff, p_gan), context_images
         )
     logger.info(
         "Imagen %dx%d: rostro=%s p_gan=%.4f p_swap=%.4f p_diff=%.4f → %s (%.2f%%)%s",
@@ -310,14 +341,13 @@ def predict_video(frames):
     if conf_override is not None:
         confidence = conf_override
     if not caveat and ctx is None:
-        # Para la zona gris se prefieren encuadres donde el rostro no domina;
-        # si no los hay (primer plano), se sondea el encuadre tal cual. La
-        # señal de generación combina GAN y difusión: ambos delatan contenido
-        # fabricado por vías distintas y un generador moderno puede rozar en
-        # una y no en la otra.
-        probe_images = context_candidates or [frame for frame, _ts in frames]
-        label, confidence, caveat, ctx = _apply_gray_zone(
-            label, confidence, max(med_diff, med_gan), probe_images
+        # Verificación final: todo "Real" en video pasa por la sonda de
+        # escena. Se prefieren encuadres donde el rostro no domina; en un
+        # primer plano no hay entorno que contrastar y decide la señal
+        # facial (GAN y difusión combinadas: ambos delatan contenido
+        # fabricado por vías distintas).
+        label, confidence, caveat, ctx = _verify_real(
+            label, confidence, max(med_diff, med_gan), context_candidates
         )
 
     logger.info(
