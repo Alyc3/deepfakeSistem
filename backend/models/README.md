@@ -153,7 +153,13 @@ La señal más alta de las tres decide. Sobre esa base:
      recientes han puntuado 0.27 y 0.34) → **INDICIOS** y peritaje manual;
    - escena limpia y señal facial baja → **REAL verificado**, con la lectura
      de escena registrada como evidencia positiva (`scene_generated`).
-   En primeros planos sin entorno contrastable decide solo la señal facial.
+   En primeros planos la sonda examina el fotograma tal cual: no puede
+   distinguir el entorno, pero aporta la opinión de un modelo independiente
+   entrenado en otra distribución — verificado con un fake en primer plano
+   que pasó con los tres detectores faciales en silencio y solo el encuadre
+   podía delatarlo. (La ruta de reserva, con señal facial alta, sí omite la
+   sonda en primeros planos: ahí rostro≈encuadre no separa filtro de
+   generación y decide el perito.)
 
 La sonda solo se paga en los casos 2 y 3 (~1 minuto extra); los veredictos
 claros no la ejecutan.

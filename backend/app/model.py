@@ -258,8 +258,11 @@ def predict_image(image_bytes: bytes):
         # La señal de generación combina ambos detectores de esa familia:
         # GAN y difusión delatan lo mismo (contenido fabricado) por vías
         # distintas, y un generador moderno puede rozar en una y no en otra.
+        # Si el rostro domina la imagen, la sonda examina la imagen tal
+        # cual: no distingue entorno, pero es la opinión de un modelo
+        # independiente entrenado en otra distribución.
         label, confidence, caveat, ctx = _verify_real(
-            label, confidence, max(p_diff, p_gan), context_images
+            label, confidence, max(p_diff, p_gan), context_images or [image]
         )
     logger.info(
         "Imagen %dx%d: rostro=%s p_gan=%.4f p_swap=%.4f p_diff=%.4f → %s (%.2f%%)%s",
@@ -343,11 +346,14 @@ def predict_video(frames):
     if not caveat and ctx is None:
         # Verificación final: todo "Real" en video pasa por la sonda de
         # escena. Se prefieren encuadres donde el rostro no domina; en un
-        # primer plano no hay entorno que contrastar y decide la señal
-        # facial (GAN y difusión combinadas: ambos delatan contenido
-        # fabricado por vías distintas).
+        # primer plano se sondea el fotograma tal cual — no distingue
+        # entorno, pero aporta la opinión de un modelo independiente
+        # entrenado en otra distribución, capaz de ver lo que los
+        # detectores faciales no ven (verificado: un fake en primer plano
+        # pasó como Real con los tres detectores faciales en silencio).
         label, confidence, caveat, ctx = _verify_real(
-            label, confidence, max(med_diff, med_gan), context_candidates
+            label, confidence, max(med_diff, med_gan),
+            context_candidates or [frame for frame, _ts in frames],
         )
 
     logger.info(
