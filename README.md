@@ -652,8 +652,9 @@ delatarlo. Escena > 0.5 → condena plena; escena ≥ 0.35 o señal facial en
 zona gris (0.25–0.5, donde los generadores recientes han puntuado 0.27 y
 0.34) → `"Suspect"` con peritaje manual; escena limpia y señal facial baja →
 `"Real"` verificado, con la lectura registrada en
-`models.scene_generated` como evidencia positiva. En primeros planos sin
-entorno contrastable decide solo la señal facial.
+`models.scene_generated` como evidencia positiva. En primeros planos la
+sonda examina el fotograma tal cual — la opinión de un modelo independiente
+sobre el mismo contenido, no una lectura de entorno.
 
 **Lenguaje del dictamen:** el veredicto `"Real"` se muestra como **REAL**; el
 porcentaje de confianza que lo acompaña es el que orienta la decisión del
