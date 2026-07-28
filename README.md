@@ -1,4 +1,4 @@
-# 🔍 CertiFace — Peritaje de Medios Digitales
+# CertiFace — Peritaje de Medios Digitales
 
 Sistema pericial para casos de **suplantación de identidad** (face swap y
 deepfake), compuesto por una **API de inferencia en FastAPI** y una **aplicación
@@ -49,11 +49,11 @@ sirve la interfaz: solo expone la API de inferencia.
 │  └──────────┬────────────┘  │         │              │               │
 │             │ IPC           │         │   ┌──────────┴──────────┐    │
 │  ┌──────────┴────────────┐  │  HTTP   │   │ preprocessing.py    │    │
-│  │ Proceso principal     │──┼────────►│   │ (fotogramas, OpenCV)│    │
+│  │ Proceso principal     │──┼────────►│   │ (fotogramas, YuNet) │    │
 │  │ lectura de disco,     │  │  POST   │   └──────────┬──────────┘    │
 │  │ peticiones, ajustes   │◄─┼─────────│   ┌──────────┴──────────┐    │
-│  └───────────────────────┘  │  JSON   │   │ model.py            │    │
-│                             │         │   │ EfficientNet-B0     │    │
+│  └───────────────────────┘  │  JSON   │   │ model.py + explain  │    │
+│                             │         │   │ 3 peritos + sonda   │    │
 └─────────────────────────────┘         │   └─────────────────────┘    │
                                         └──────────────────────────────┘
 ```
@@ -65,9 +65,15 @@ deepfakeSistem/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py            # Rutas HTTP y despacho imagen/video
-│   │   ├── model.py           # Carga del modelo e inferencia
-│   │   ├── preprocessing.py   # Extracción de fotogramas con OpenCV
+│   │   ├── model.py           # Orquestación: peritos, agregación y veredicto
+│   │   ├── faceswap_model.py  # Detector De Face Swap (B7, DFDC)
+│   │   ├── diffusion_model.py # Detector De Difusión Facial (SigLIP2)
+│   │   ├── scene_model.py     # Sonda De Escena Generada (ensemble)
+│   │   ├── explain.py         # Mapa de calor explicativo (EigenCAM fusionado)
+│   │   ├── preprocessing.py   # Fotogramas (OpenCV) y recorte facial (YuNet)
 │   │   └── schemas.py         # (vacío, reservado para modelos Pydantic)
+│   ├── scripts/
+│   │   └── fetch_models.py    # Reconstruye los pesos no versionados
 │   ├── models/                # Ver models/README.md (catálogo y procedimiento)
 │   │   ├── Detector_Facial_YuNet.onnx    # Recorte facial (227 KB)
 │   │   ├── Detector_De_Sintesis_GAN.pth  # Perito 1: síntesis GAN (16 MB)
@@ -107,8 +113,9 @@ deepfakeSistem/
 | Cliente | npm | `npm --version` |
 
 No hace falta GPU: si no se detecta CUDA, PyTorch usa la CPU automáticamente
-(`backend/app/model.py:9`). Tampoco hace falta entrenar nada, porque los pesos
-ya están en el repositorio.
+(y la Sonda De Escena elige dispositivo según la VRAM libre). Tampoco hace
+falta entrenar nada: los pesos propios van en el repositorio y los de
+terceros se reconstruyen con `scripts/fetch_models.py` (paso 4).
 
 ---
 
@@ -116,7 +123,7 @@ ya están en el repositorio.
 
 > **Importante:** `uvicorn` debe lanzarse **desde el directorio `backend/`**.
 > El modelo se carga con la ruta relativa `models/Detector_De_Sintesis_GAN.pth`
-> (`backend/app/model.py:11`) y el video temporal también se escribe en el
+> (`backend/app/model.py`) y el video temporal también se escribe en el
 > directorio de trabajo. Si arrancas desde otro sitio, la carga falla.
 
 ### 1. Crear el entorno virtual
@@ -226,7 +233,11 @@ guardada entre sesiones: **no hay archivos `.env`**.
    de cada detector, los momentos sospechosos — y cierra con el dictamen.
 4. El dictamen aparece como sello — **MANIPULADO** en naranja, **REAL** en
    moss o **INDICIOS** en ámbar — con su confianza y el desglose por modelo.
-5. Si el dictamen queda en **INDICIOS**, se abre el **peritaje manual**: un
+5. Bajo el dictamen aparece el **mapa de calor explicativo** (EigenCAM
+   fusionado de todos los peritos, sobre el fotograma de mayor señal): las
+   zonas cálidas son las regiones que sustentaron el veredicto, con la
+   leyenda de ponderación por detector. Clic para ampliar.
+6. Si el dictamen queda en **INDICIOS**, se abre el **peritaje manual**: un
    checklist de seis observaciones (bordes del rostro, naturalidad de gestos,
    coherencia de iluminación, filtros, momentos sospechosos, origen del
    material) que respondes mirando la evidencia a la izquierda. Al emitir, el
@@ -282,9 +293,10 @@ sea en la máquina local o en un servidor remoto.
 > documenta el procedimiento completo de determinación paso a paso (con
 > diagrama de flujo) y el catálogo de modelos con su Nombre Estándar.
 
-El sistema usa **tres modelos complementarios** — tres peritos, cada uno
-especialista en una familia de manipulación — y el veredicto lo decide el que
-más alarma levante:
+El sistema usa **tres peritos faciales complementarios más una sonda de
+escena** — cada uno especialista en una familia de manipulación — y el
+veredicto lo decide el que más alarma levante, con la sonda como segunda
+opinión sobre el encuadre completo:
 
 | | Perito 1: síntesis GAN | Perito 2: face swap | Perito 3: difusión moderna | Sonda de escena |
 |---|---|---|---|---|
@@ -330,7 +342,7 @@ revisar a mano con su marca de tiempo.
 
 **EfficientNet-B0** adaptado a clasificación binaria. Se instancia con
 `EfficientNet.from_name('efficientnet-b0', num_classes=2)`
-(`backend/app/model.py:10`): `from_name` construye la arquitectura **sin**
+(`backend/app/model.py`): `from_name` construye la arquitectura **sin**
 descargar los pesos de ImageNet, porque a continuación se cargan los pesos
 propios del entrenamiento.
 
@@ -411,39 +423,46 @@ heredado de la etapa en que el frontend era una página web. Con el cliente de
 escritorio ya no interviene, porque la petición sale de Node y no de un
 navegador.
 
-### `model.py` — inferencia
+### `model.py` — orquestación de peritos y veredicto
 
-El modelo se carga **una sola vez al importar el módulo**, no en cada petición:
-`load_state_dict`, traslado al dispositivo y `model.eval()` para desactivar
-*dropout* y fijar las capas de *batch normalization*. Toda la inferencia va
-dentro de `torch.no_grad()`, que evita construir el grafo de gradientes.
+Es el director del peritaje. Cada modelo vive en su propio módulo
+(`faceswap_model.py`, `diffusion_model.py`, `scene_model.py`; el Detector De
+Síntesis GAN, por herencia histórica, vive aquí mismo) y todos se cargan
+**una sola vez al importar**, con `model.eval()` y toda la inferencia bajo
+`torch.no_grad()`. Cada módulo gestiona su propio `device`: los detectores
+por-fotograma suben a GPU si existe, y la Sonda De Escena comprueba la VRAM
+libre antes de decidir (en GPUs de ~4 GiB se queda en CPU y cede la GPU a
+quienes corren 24 veces por video).
 
-Las dos funciones difieren en cómo calculan la confianza:
+`predict_image` y `predict_video` comparten el mismo esqueleto:
 
-**`predict_image`** — un solo paso hacia delante. Aplica `softmax` sobre los dos
-logits y toma el máximo: gana la clase con mayor probabilidad y esa misma
-probabilidad es la confianza.
+1. Recorte facial (YuNet) → los tres peritos faciales puntúan el recorte.
+2. Agregación por familia (video): **mediana** para GAN y difusión, **segundo
+   máximo** para face swap — la justificación forense de cada estadística
+   está en [backend/models/README.md](backend/models/README.md), Paso 4.
+3. Cascada de decisión: condena corroborada → `Fake`; condena solo por
+   difusión → contraprueba con la Sonda De Escena (cuatro salidas, Paso 5);
+   candidato a `Real` → verificación sistemática de escena; señal en zona
+   gris → `Suspect`.
+4. Mapa de calor explicativo (`explain.py`) sobre el fotograma más
+   incriminatorio, dentro de un `try/except`: su fallo nunca afecta al
+   veredicto.
 
-```python
-probabilities = torch.softmax(outputs, dim=1)
-confidence, predicted_class = torch.max(probabilities, dim=1)
-```
+Cada fotograma queda en el log con sus tres probabilidades (`p_gan`,
+`p_swap`, `p_diff`), y la respuesta expone `frame_scores` (máximo por
+fotograma) y los agregados por familia en `models` — la trazabilidad
+completa de dónde salió el veredicto.
 
-**`predict_video`** — clasifica cada fotograma por separado, guarda la
-probabilidad de la clase *fake* y **promedia**. La decisión se toma sobre ese
-promedio con umbral 0,5:
+### `explain.py` — mapa de calor explicativo
 
-```python
-avg_fake_score = sum(fake_scores) / len(fake_scores)
-label = "Fake" if avg_fake_score > 0.5 else "Real"
-confidence = avg_fake_score if label == "Fake" else 1 - avg_fake_score
-```
-
-Promediar probabilidades en lugar de votar por mayoría hace que un fotograma
-muy dudoso pese lo mismo que uno muy claro; es una decisión de diseño
-deliberadamente simple. Cada fotograma queda registrado en el log con su
-probabilidad individual (`frame_scores` en la respuesta), lo que permite ver si
-un veredicto salió de fotogramas homogéneos o de una mezcla dudosa.
+Genera la evidencia visual del dictamen: **EigenCAM** (primer componente
+principal de las activaciones, vía SVD, sin gradientes ni dependencias
+externas) por cada perito que participó, fusionado en un único mapa
+ponderado por la señal de cada uno y superpuesto sobre el fotograma
+completo. Los detalles del método, los anclajes por arquitectura y la
+semántica de la intensidad están en el Paso 7 de
+[backend/models/README.md](backend/models/README.md); el contrato del campo
+`explanation` está en la sección de la API.
 
 ### `preprocessing.py` — detección facial y extracción de fotogramas
 
@@ -453,10 +472,12 @@ alineados que ocupan todo el encuadre; pasarle un fotograma de video completo
 dominando el fondo, no la cara. Por eso, antes de clasificar, se detecta el
 rostro más grande con **YuNet** (`cv2.FaceDetectorYN`, modelo ONNX de
 [opencv_zoo](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) incluido en
-`backend/models/`) y se recorta con un margen del 35 %. Si no hay rostro
-detectable se analiza la imagen completa como último recurso, se avisa en el
-log y `faces_detected` lo refleja en la respuesta. Esto aplica tanto a
-imágenes como a cada fotograma de video.
+`backend/models/`) y se recorta con un margen del 35 %. La función devuelve
+`(imagen, encontrado, bbox)`: la caja en píxeles del encuadre original
+permite reubicar el mapa de calor sobre el fotograma completo. Si no hay
+rostro detectable se analiza la imagen completa como último recurso (bbox =
+encuadre entero), se avisa en el log y `faces_detected` lo refleja en la
+respuesta. Esto aplica tanto a imágenes como a cada fotograma de video.
 
 **Extracción (`extract_frames`, hasta 24 fotogramas con marca de tiempo).** Escribe el video en un
 archivo temporal **de nombre único** (dos peticiones simultáneas ya no se
@@ -615,9 +636,23 @@ Cuerpo `multipart/form-data` con un único campo `file`.
   "faces_detected": 9,
   "frame_scores": [0.12, 0.88, 0.95, 0.11, 0.09, 0.91, 0.9, 0.2, 0.93, 0.17],
   "suspicious_seconds": [{ "second": 2.4, "score": 0.9782 }, { "second": 4.1, "score": 0.695 }],
-  "models": { "synthesis_gan": 0.0312, "faceswap_dfdc": 0.913, "diffusion_modern": 0.0421 }
+  "models": { "synthesis_gan": 0.0312, "faceswap_dfdc": 0.913, "diffusion_modern": 0.0421 },
+  "explanation": {
+    "image": "data:image/jpeg;base64,…",
+    "second": 2.4,
+    "weights": { "synthesis_gan": 0.031, "faceswap_dfdc": 0.978, "diffusion_modern": 0.042 },
+    "width": 720,
+    "height": 405
+  }
 }
 ```
+
+`explanation` es opcional y aditivo: el **mapa de calor explicativo**
+(EigenCAM fusionado de todos los peritos que participaron) superpuesto sobre
+el fotograma de mayor señal (`second`; `null` en imágenes), como data URI
+JPEG con lado mayor ≤ 720 px. `weights` son las señales por-fotograma que
+ponderaron la fusión. Si el cálculo del mapa falla, el campo simplemente no
+aparece — el veredicto nunca depende de él.
 
 `prediction` es la cadena `"Real"`, `"Fake"` o `"Suspect"`, y `confidence` un
 porcentaje entre 0 y 100 redondeado a dos decimales.
@@ -648,11 +683,12 @@ face swap o GAN siguen saliendo como `"Fake"` pleno.
 de escena examina el encuadre completo como segunda opinión sistemática —
 un generador reciente llegó a dejar el rostro casi limpio (señal facial
 0.13, por debajo del real más alto observado) y solo el encuadre podía
-delatarlo. Escena > 0.5 → condena plena; escena ≥ 0.35 o señal facial en
-zona gris (0.25–0.5, donde los generadores recientes han puntuado 0.27 y
-0.34) → `"Suspect"` con peritaje manual; escena limpia y señal facial baja →
-`"Real"` verificado, con la lectura registrada en
-`models.scene_generated` como evidencia positiva. En primeros planos la
+delatarlo. Escena > 0.75 → condena plena (listón alto: la sonda condena en
+solitario y su ruido sobre material auténtico llega casi a 0.5); escena
+≥ 0.55 o señal facial en zona gris (0.25–0.5, donde los generadores
+recientes han puntuado 0.27 y 0.34) → `"Suspect"` con peritaje manual;
+escena limpia y señal facial baja → `"Real"` verificado, con la lectura
+registrada en `models.scene_generated` como evidencia positiva. En primeros planos la
 sonda examina el fotograma tal cual — la opinión de un modelo independiente
 sobre el mismo contenido, no una lectura de entorno.
 
@@ -663,9 +699,10 @@ nunca llega a este sello. `faces_detected` indica en
 cuántos fotogramas (o en la imagen) se pudo recortar un rostro; si es 0, el
 veredicto se emitió sobre el encuadre completo y la aplicación lo advierte.
 `frame_scores` es, por fotograma, la mayor probabilidad de manipulación entre
-los dos modelos. `models` desglosa la puntuación agregada de cada perito:
-`synthesis_gan` (síntesis tipo StyleGAN) y `faceswap_dfdc` (face swap); el
-veredicto lo decide el más alto de los dos.
+los peritos faciales. `models` desglosa la puntuación agregada de cada uno:
+`synthesis_gan`, `faceswap_dfdc`, `diffusion_modern` y, cuando la sonda
+participó, `scene_generated`; el veredicto lo decide la señal más alta, con
+las reglas de reserva y verificación descritas arriba.
 
 **Errores:** si el video no se puede decodificar (códec no soportado), el
 endpoint responde `422` con un campo `detail` que explica la causa; la
@@ -710,5 +747,5 @@ aplicación de escritorio muestra ese mensaje tal cual.
 | Un video se analiza como si fuera imagen | La extensión no está en la tabla de MIME de `src/main/api.js`. Añádela allí. |
 | Todo video da el mismo veredicto | Revisa el log del backend: `faces_detected` por fotograma y los `p_fake` individuales dicen si el detector encuentra el rostro y cómo puntúa cada fotograma. Si `rostro=no` en todos, el material no tiene caras detectables de frente. |
 | El video no se puede decodificar (HTTP 422) | El códec no lo soporta OpenCV. Recodifica a MP4/H.264, por ejemplo: `ffmpeg -i entrada -c:v libx264 -crf 23 salida.mp4`. |
-| El análisis de un video se agota por tiempo | En CPU los tres modelos suman ~2 s por fotograma (~45–55 s por video). Si aun así se agota, sube el límite en la llamada a `predict` de `src/main/api.js` o reduce `max_frames` en `extract_frames`. |
+| El análisis de un video se agota por tiempo | En CPU los tres peritos faciales suman ~2 s por fotograma (~45–55 s por video), más la sonda de escena (~30 s por sonda) cuando el caso la requiere y ~2–5 s del mapa de calor. Si se agota, sube el límite en la llamada a `predict` de `src/main/api.js` o reduce `max_frames` en `extract_frames`. |
 | La vista previa aparece en blanco | El formato del contenedor de video no lo soporta Chromium (por ejemplo, ciertos `.mkv`). El análisis sigue funcionando: la vista previa y la inferencia son independientes. |

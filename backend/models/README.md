@@ -28,6 +28,9 @@ Correspondencia con las claves de la API (`models` en la respuesta de
 | Detector De Difusión Facial | `diffusion_modern` | DIFUSIÓN |
 | Sonda De Escena Generada | `scene_generated` | ESCENA |
 
+Las mismas claves se usan en `explanation.weights` (la ponderación del mapa
+de calor explicativo, Paso 7).
+
 Todos los pesos se cargan desde este directorio en el arranque, en modo
 seguro (`torch.load` con `weights_only`); los checkpoints de terceros se
 convirtieron una única vez a archivos de solo-tensores. No hay descargas en
@@ -69,11 +72,11 @@ flowchart TD
     F -- "Sí, con corroboración<br/>(GAN o Face Swap ≥ 0.3)" --> G[MANIPULADO]
     F -- "Sí, pero solo difusión" --> H[Sonda De Escena Generada<br/>2 encuadres completos]
     F -- "No supera 0.5:<br/>candidato a REAL" --> H2[Sonda De Escena Generada<br/>verificación sistemática]
-    H -- "Escena > 0.5:<br/>generación global" --> G
+    H -- "Escena > 0.6:<br/>generación global" --> G
     H -- "Rostro < 0.7 y<br/>escena < 0.3" --> I2[REAL con nota<br/>patrón de filtro]
     H -- "Rostro ≥ 0.7 o<br/>escena no concluyente" --> J[INDICIOS<br/>filtro o face swap moderno]
-    H2 -- "Escena > 0.5:<br/>generación global" --> G
-    H2 -- "Escena ≥ 0.35 o<br/>señal facial ≥ 0.25" --> J2[INDICIOS<br/>señal débil]
+    H2 -- "Escena > 0.75:<br/>generación global" --> G
+    H2 -- "Escena ≥ 0.55 o<br/>señal facial ≥ 0.25" --> J2[INDICIOS<br/>señal débil]
     H2 -- "Escena limpia y<br/>señal facial baja" --> I[REAL verificado]
 ```
 
@@ -148,11 +151,18 @@ La señal más alta de las tres decide. Sobre esa base:
    Motivo, verificado empíricamente: un generador reciente dejó el rostro
    casi limpio (mediana facial 0.13, por debajo del real más alto observado,
    0.19) — la única evidencia posible estaba en el encuadre. Salidas:
-   - escena > 0.5 → **MANIPULADO** (generación global);
-   - escena ≥ 0.35, o señal facial en zona gris (0.25–0.5, donde generadores
+   - escena > 0.75 → **MANIPULADO** (generación global; el listón alto es
+     deliberado — aquí la sonda condena en solitario, y su ruido sobre
+     material auténtico llega casi a 0.5: lecturas reales observadas 0.25,
+     0.29, 0.47 y 0.48);
+   - escena ≥ 0.55, o señal facial en zona gris (0.25–0.5, donde generadores
      recientes han puntuado 0.27 y 0.34) → **INDICIOS** y peritaje manual;
    - escena limpia y señal facial baja → **REAL verificado**, con la lectura
      de escena registrada como evidencia positiva (`scene_generated`).
+   En la ruta de reserva (donde la sonda solo *confirma* una condena facial
+   ya existente) el listón de confirmación es 0.6. Los tres umbrales quedan
+   pendientes de contraste con lecturas de escena sobre video generado, aún
+   inexistentes.
    En primeros planos la sonda examina el fotograma tal cual: no puede
    distinguir el entorno, pero aporta la opinión de un modelo independiente
    entrenado en otra distribución — verificado con un fake en primer plano
@@ -177,6 +187,46 @@ marcada con ▸), los fotogramas analizados y con rostro, la puntuación por
 fotograma (`frame_scores`) y los **momentos sospechosos** con marca de tiempo
 (`suspicious_seconds`, fotogramas de face swap > 0.6) para revisión manual
 directa en la línea de tiempo.
+
+### Paso 7 — Mapa De Calor Explicativo (EigenCAM)
+
+Para que el perito respalde el dictamen, el sistema genera **un único mapa de
+calor que fusiona la atención de todos los peritos que participaron**,
+superpuesto sobre el fotograma de mayor señal (el más incriminatorio; en
+imágenes, la imagen misma). Implementado en `backend/app/explain.py` sin
+dependencias externas.
+
+**Método.** EigenCAM: primer componente principal (SVD) de las activaciones
+de la última capa de cada modelo — sin gradientes, aplicable a CNN y ViT por
+igual. Anclajes: `extract_features` del B0 (7×7), `encoder.bn2` del B7
+(12×12, con el letterbox de entrada deshecho), `post_layernorm` del SigLIP
+facial (parches 14×14) y de la torre SigLIP del ensemble de escena (cuando
+la sonda participó con peso ≥ 0.05).
+
+**Fusión.** Cada mapa se normaliza 0-1; los faciales se reubican en la caja
+del rostro dentro del fotograma completo y el de escena cubre el encuadre
+(este último, solo si su lectura fue **relevante para el veredicto** —
+≥ 0.5, es decir, confirmó o levantó sospecha; una lectura descartada por la
+decisión no pinta el mapa). La fusión es un **máximo ponderado por píxel**:
+
+    fusionado(x) = maxᵢ( wᵢ · camᵢ(x) )
+
+con wᵢ = señal por-fotograma de cada detector. Cada punto refleja así la
+evidencia del perito más fuerte en ese punto, en **probabilidad absoluta**,
+sin que un promedio la diluya.
+
+**Presentación forense.** La evidencia se convierte a escala de grises
+atenuada, de modo que **todo color en el mapa es señal**, nunca color propio
+de la imagen. El color codifica la intensidad absoluta con la **escala de
+riesgo verde → amarillo → naranja → rojo**: un material auténtico muestra
+zonas de atención verdes y suaves; uno manipulado, núcleos rojos. Se
+muestran **todas** las zonas de atención (el mapa se suaviza en manchas
+orgánicas y solo se descarta el ruido puntual sin área mínima), en degradado
+continuo, sin contornos duros; el CAM de escena recibe además un difuminado
+agresivo que lava su moteado característico. Recuadro naranja en el rostro
+analizado. El resultado viaja en el campo `explanation` de la respuesta
+(JPEG base64, lado ≤ 720 px) y la interfaz lo muestra bajo el dictamen con
+la leyenda de ponderaciones. Un fallo del mapa nunca afecta al veredicto.
 
 ### Imágenes
 
