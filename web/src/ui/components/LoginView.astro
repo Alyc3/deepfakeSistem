@@ -1,0 +1,45 @@
+---
+/** Vista 2 — Acceso: identificación del perito antes de abrir el laboratorio. */
+---
+
+<section id="view-login" class="view view-login" hidden>
+  <div class="login-card">
+    <img src="/assets/art/reticle.svg" alt="" class="login-reticle" aria-hidden="true" />
+    <p class="eyebrow">Acceso restringido · Cadena de custodia</p>
+    <h1 id="login-title" class="login-title">Identificación del perito</h1>
+    <p id="login-hint" class="login-hint">
+      Introduce tu credencial para acceder al laboratorio.
+    </p>
+
+    <form id="login-form" class="login-form">
+      <label class="field">
+        <span class="mono-label">Credencial</span>
+        <input
+          id="login-user"
+          class="text-input"
+          type="text"
+          autocomplete="username"
+          spellcheck="false"
+          required
+        />
+      </label>
+      <label class="field">
+        <span class="mono-label">Clave</span>
+        <input
+          id="login-pass"
+          class="text-input"
+          type="password"
+          autocomplete="current-password"
+          required
+          minlength="6"
+        />
+      </label>
+      <p id="login-error" class="login-error" hidden></p>
+      <button id="login-submit" class="primary-button" type="submit">
+        Acceder al laboratorio
+      </button>
+    </form>
+
+    <button id="login-back" class="link-button" type="button">← Volver a la portada</button>
+  </div>
+</section>

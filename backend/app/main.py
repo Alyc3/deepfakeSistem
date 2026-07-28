@@ -1,5 +1,7 @@
 import logging
 import time
+import os
+import subprocess
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +10,11 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
+
+# Descargar los pesos de los modelos si no existen (útil para la nube donde se ignoran por el .gitignore)
+if not os.path.exists("models/Detector_De_Difusion_Facial/model.safetensors"):
+    logging.info("Descargando modelos faltantes (esto puede tardar unos minutos en el primer arranque)...")
+    subprocess.run(["python", "scripts/fetch_models.py"], check=True)
 
 from app.model import predict_image, predict_video
 from app.preprocessing import extract_frames
@@ -60,8 +67,11 @@ async def predict(file: UploadFile = File(...)):
     loggable = {k: v for k, v in result.items() if k != "explanation"}
     if "explanation" in result:
         exp = result["explanation"]
+        strip = exp.get("frames") or []
+        detail = f", {len(strip)} fotogramas ilustrados" if strip else ""
         loggable["explanation"] = (
-            f"<mapa de calor {exp['width']}x{exp['height']}, t={exp['second']}>"
+            f"<mapa de calor {exp['width']}x{exp['height']}, "
+            f"t={exp['second']}{detail}>"
         )
     logger.info(
         "Respuesta /predict en %.2f s: %s",

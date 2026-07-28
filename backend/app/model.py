@@ -324,38 +324,47 @@ def predict_video(frames):
     context_candidates = []  # encuadres completos donde el rostro no domina
     suspects = []
     faces_found = 0
-    # Fotograma más incriminatorio, para el mapa de calor explicativo:
-    # (señal, frame, bbox, timestamp, p_gan, p_swap, p_diff)
-    best = None
+    bboxes = []       # caja facial de cada fotograma (para su mapa de calor)
+    frame_cams = []   # CAM de cada fotograma, capturados durante la inferencia
+    # Índice del fotograma más incriminatorio: el que encabeza la evidencia.
+    best_index = 0
+    best_signal = -1.0
 
-    for i, (frame, timestamp) in enumerate(frames):
-        face, found, bbox = crop_largest_face(frame)
-        faces_found += int(found)
-        p_gan = _fake_probability(face)
-        p_swap = faceswap_model.fake_probability(face)
-        p_diff = diffusion_model.fake_probability(face)
-        gan_scores.append(p_gan)
-        swap_scores.append(p_swap)
-        diff_scores.append(p_diff)
-        signal = max(p_gan, p_swap, p_diff)
-        if best is None or signal > best[0]:
-            best = (signal, frame, bbox, timestamp, p_gan, p_swap, p_diff)
-        if found:
-            face_fraction = (face.width * face.height) / (frame.width * frame.height)
-            if face_fraction <= CONTEXT_FACE_MAX_FRACTION:
-                context_candidates.append(frame)
-        # Solo el detector de face swap alimenta la lista de sospechosos: el
-        # B0 está fuera de su dominio en fotogramas de video "salvajes" y sus
-        # picos aislados ahí son ruido (verificado con video auténtico), no
-        # indicios revisables. La generación por difusión afecta a todo el
-        # video por igual, así que tampoco tiene "momentos" que señalar.
-        if p_swap > SUSPECT_THRESHOLD and timestamp is not None:
-            suspects.append({"second": timestamp, "score": round(p_swap, 4)})
-        logger.info(
-            "Fotograma %d/%d (t=%ss): rostro=%s p_gan=%.4f p_swap=%.4f p_diff=%.4f",
-            i + 1, len(frames), timestamp, "sí" if found else "no (fotograma completo)",
-            p_gan, p_swap, p_diff,
-        )
+    # Los CAM se congelan al vuelo mientras los peritos puntúan: así el mapa
+    # de los 24 fotogramas no cuesta una segunda pasada de inferencia.
+    with explain.capture_facial_cams() as capture:
+        for i, (frame, timestamp) in enumerate(frames):
+            face, found, bbox = crop_largest_face(frame)
+            faces_found += int(found)
+            p_gan = _fake_probability(face)
+            p_swap = faceswap_model.fake_probability(face)
+            p_diff = diffusion_model.fake_probability(face)
+            gan_scores.append(p_gan)
+            swap_scores.append(p_swap)
+            diff_scores.append(p_diff)
+            bboxes.append(bbox)
+            frame_cams.append(capture.snapshot(face.size))
+            signal = max(p_gan, p_swap, p_diff)
+            if signal > best_signal:
+                best_signal, best_index = signal, i
+            if found:
+                face_fraction = (face.width * face.height) / (frame.width * frame.height)
+                if face_fraction <= CONTEXT_FACE_MAX_FRACTION:
+                    context_candidates.append(frame)
+            # Solo el detector de face swap alimenta la lista de sospechosos:
+            # el B0 está fuera de su dominio en fotogramas de video "salvajes"
+            # y sus picos aislados ahí son ruido (verificado con video
+            # auténtico), no indicios revisables. La generación por difusión
+            # afecta a todo el video por igual, así que tampoco tiene
+            # "momentos" que señalar.
+            if p_swap > SUSPECT_THRESHOLD and timestamp is not None:
+                suspects.append({"second": timestamp, "score": round(p_swap, 4)})
+            logger.info(
+                "Fotograma %d/%d (t=%ss): rostro=%s p_gan=%.4f p_swap=%.4f p_diff=%.4f",
+                i + 1, len(frames), timestamp,
+                "sí" if found else "no (fotograma completo)",
+                p_gan, p_swap, p_diff,
+            )
 
     # GAN y difusión: mediana. La generación afecta a todos los fotogramas
     # por igual, así que el valor central es el representativo; la mediana
@@ -423,25 +432,72 @@ def predict_video(frames):
     if caveat:
         result["caveat"] = caveat
 
-    # Mapa de calor explicativo sobre el fotograma más incriminatorio, con
-    # los scores por-fotograma de ese instante como pesos de la fusión. Un
-    # fallo aquí nunca afecta al veredicto.
-    if best is not None:
-        weights = {
-            "synthesis_gan": best[4],
-            "faceswap_dfdc": best[5],
-            "diffusion_modern": best[6],
-        }
-        if ctx is not None:
-            weights["scene_generated"] = ctx
-        try:
-            explanation = explain.build_explanation(
-                best[1], best[2], weights, second=best[3]
+    # Mapa de calor explicativo: uno por cada fotograma analizado más el
+    # destacado (el de mayor señal). Un fallo aquí nunca afecta al veredicto.
+    try:
+        explanation = _video_explanation(
+            frames, bboxes, frame_cams,
+            gan_scores, swap_scores, diff_scores, best_index, ctx,
+        )
+        if explanation:
+            result["explanation"] = explanation
+            logger.info(
+                "Mapa de calor: %d fotogramas ilustrados, destacado t=%ss",
+                len(explanation.get("frames", [])), explanation.get("second"),
             )
-            if explanation:
-                result["explanation"] = explanation
-        except Exception:
-            logger.exception(
-                "No se pudo generar el mapa de calor; el dictamen se emite sin él."
-            )
+    except Exception:
+        logger.exception(
+            "No se pudo generar el mapa de calor; el dictamen se emite sin él."
+        )
     return result
+
+
+def _video_explanation(frames, bboxes, frame_cams, gan_scores, swap_scores,
+                       diff_scores, best_index, ctx):
+    """Mapas de calor del video: uno por fotograma, más el destacado.
+
+    Cada fotograma se colorea con **sus propios** scores como pesos, así que
+    la tira muestra cómo evoluciona la atención de los peritos a lo largo del
+    video. La lectura de la sonda de escena es global (se tomó sobre dos
+    sondas, no por fotograma), de modo que solo entra en el mapa destacado.
+    """
+    def weights_at(i):
+        return {
+            "synthesis_gan": gan_scores[i],
+            "faceswap_dfdc": swap_scores[i],
+            "diffusion_modern": diff_scores[i],
+        }
+
+    strip = []
+    for i, (frame, timestamp) in enumerate(frames):
+        try:
+            entry = explain.build_explanation(
+                frame, bboxes[i], weights_at(i), second=timestamp,
+                facial_cams=frame_cams[i], with_scene=False,
+                max_side=explain.FRAME_MAX_SIDE,
+                quality=explain.FRAME_JPEG_QUALITY,
+            )
+        except Exception:
+            logger.exception("No se pudo generar el mapa del fotograma %d.", i + 1)
+            continue
+        if entry is None:
+            continue
+        entry["index"] = i
+        entry["signal"] = round(
+            max(gan_scores[i], swap_scores[i], diff_scores[i]), 4
+        )
+        strip.append(entry)
+
+    featured_weights = weights_at(best_index)
+    if ctx is not None:
+        featured_weights["scene_generated"] = ctx
+    featured = explain.build_explanation(
+        frames[best_index][0], bboxes[best_index], featured_weights,
+        second=frames[best_index][1], facial_cams=frame_cams[best_index],
+    )
+    if featured is None:
+        return None
+
+    featured["featured_index"] = best_index
+    featured["frames"] = strip
+    return featured

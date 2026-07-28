@@ -1,0 +1,31 @@
+---
+/**
+ * Envoltura del documento. La aplicación es una sola página con tres vistas
+ * (portada → acceso → laboratorio) que el enrutador del cliente alterna, tal
+ * como hacía la ventana del cliente de escritorio.
+ */
+import "@ui/styles/global.css";
+
+interface Props {
+  title: string;
+  description: string;
+}
+
+const { title, description } = Astro.props;
+---
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#100c0b" />
+    <link rel="icon" type="image/png" href="/assets/art/icon.png" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
