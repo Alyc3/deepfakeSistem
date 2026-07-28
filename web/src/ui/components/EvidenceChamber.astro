@@ -1,0 +1,60 @@
+---
+/**
+ * Columna izquierda del laboratorio: ingesta del material, reproductor a
+ * tamaño completo, controles y registro de casos.
+ */
+import { ACCEPT_ATTRIBUTE } from "@domain/evidence";
+---
+
+<section class="chamber">
+  <div class="chamber-head">
+    <h2 class="mono-label">Cámara de evidencia</h2>
+    <div class="samples">
+      <button class="link-button" type="button" data-sample="real">Muestra auténtica</button>
+      <span class="sep">·</span>
+      <button class="link-button" type="button" data-sample="fake">Muestra sintética</button>
+    </div>
+  </div>
+
+  <!-- El selector nativo del navegador sustituye al diálogo de archivos del
+       sistema que abría el cliente de escritorio. -->
+  <input
+    id="file-input"
+    class="visually-hidden"
+    type="file"
+    accept={ACCEPT_ATTRIBUTE}
+    tabindex="-1"
+    aria-hidden="true"
+  />
+
+  <button id="dropzone" class="dropzone" type="button">
+    <span class="corner corner--tl"></span><span class="corner corner--tr"></span>
+    <span class="corner corner--bl"></span><span class="corner corner--br"></span>
+    <span id="dropzone-label" class="dropzone-label">
+      Deposita aquí el material cuestionado
+    </span>
+    <span class="dropzone-hint mono-label">CLIC O ARRASTRE · IMG / VIDEO · ≤ 10 MB</span>
+  </button>
+
+  <div id="preview-frame" class="preview-frame" hidden>
+    <span class="corner corner--tl"></span><span class="corner corner--tr"></span>
+    <span class="corner corner--bl"></span><span class="corner corner--br"></span>
+    <div id="preview-container" class="preview"></div>
+    <div id="scan-overlay" class="scan-overlay" hidden></div>
+  </div>
+
+  <div class="chamber-actions">
+    <button id="analyze" class="primary-button primary-button--wide" type="button" disabled>
+      Ejecutar análisis
+    </button>
+    <button id="reset" class="ghost-button" type="button" hidden>Nuevo examen</button>
+  </div>
+
+  <section id="history-section" class="casefile" hidden>
+    <div class="casefile-head">
+      <h2 class="mono-label">Registro de casos</h2>
+      <button id="history-clear" class="link-button" type="button">Vaciar registro</button>
+    </div>
+    <ul id="history-list" class="casefile-list"></ul>
+  </section>
+</section>

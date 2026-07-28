@@ -1,0 +1,46 @@
+---
+/** Vista 3 — Laboratorio: evidencia a la izquierda, análisis a la derecha. */
+import EvidenceChamber from "@ui/components/EvidenceChamber.astro";
+import AnalysisPanel from "@ui/components/AnalysisPanel.astro";
+---
+
+<section id="view-app" class="view view-app" hidden>
+  <header class="appbar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span class="brand-name">CertiFace</span>
+    </div>
+    <div class="appbar-status">
+      <span id="status-dot" class="status-dot" data-state="unknown"></span>
+      <button id="status-text" class="link-button" type="button">Comprobando backend…</button>
+    </div>
+    <div class="appbar-user">
+      <span id="analyst-name" class="mono-label"></span>
+      <button id="settings-toggle" class="ghost-button ghost-button--sm" type="button">Backend</button>
+      <button id="logout" class="ghost-button ghost-button--sm" type="button">Cerrar sesión</button>
+    </div>
+  </header>
+
+  <main class="workbench">
+    <div id="settings-panel" class="settings-panel" hidden>
+      <label class="field">
+        <span class="mono-label">URL del backend</span>
+        <div class="settings-row">
+          <input
+            id="api-url"
+            class="text-input"
+            type="text"
+            spellcheck="false"
+            placeholder="http://127.0.0.1:8000"
+          />
+          <button id="settings-save" class="ghost-button" type="button">Guardar</button>
+        </div>
+      </label>
+    </div>
+
+    <div class="workgrid">
+      <EvidenceChamber />
+      <AnalysisPanel />
+    </div>
+  </main>
+</section>

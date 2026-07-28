@@ -1,0 +1,118 @@
+---
+/** Vista 1 — Portada: qué hace el laboratorio, con qué protocolo y con qué límites. */
+---
+
+<section id="view-landing" class="view view-landing">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span class="brand-name">CertiFace</span>
+      <span class="brand-tag">LAB·PERICIAL</span>
+    </div>
+    <button id="landing-enter-top" class="ghost-button" type="button">Ingresar</button>
+  </header>
+
+  <div class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">Unidad de análisis forense digital · Suplantación de identidad</p>
+      <h1 class="hero-title">
+        La evidencia<br />no miente.<br />
+        <span class="hero-title-accent">El video, a veces, sí.</span>
+      </h1>
+      <p class="hero-sub">
+        CertiFace examina imágenes y videos de rostros en busca de manipulación
+        por face swap y síntesis generativa, y emite un dictamen preliminar
+        con confianza cuantificada. Todo el análisis queda registrado en el
+        equipo del perito.
+      </p>
+      <div class="hero-actions">
+        <button id="landing-enter" class="primary-button" type="button">
+          Iniciar peritaje
+        </button>
+        <button id="landing-protocol" class="ghost-button" type="button">
+          Ver protocolo
+        </button>
+      </div>
+    </div>
+
+    <div class="hero-art" aria-hidden="true">
+      <div class="specimen">
+        <img src="/assets/muestras/sample-fake.jpg" alt="" class="specimen-img" />
+        <div class="specimen-scan"></div>
+        <div class="specimen-grain"></div>
+      </div>
+      <img src="/assets/art/reticle.svg" alt="" class="reticle" />
+      <div class="specimen-caption">
+        <span class="mono-label">ESPÉCIMEN 06</span>
+        <span class="verdict-chip verdict-chip--fake">SINTÉTICO · GAN</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="datastrip" aria-label="Especificaciones del sistema">
+    <span>EfficientNet-B0</span>
+    <span>4,05 M parámetros</span>
+    <span>140 k rostros de entrenamiento</span>
+    <span>entrada 224×224 px</span>
+    <span>inferencia local o remota</span>
+  </div>
+
+  <div id="protocol" class="ledger">
+    <h2 class="ledger-title">Protocolo de peritaje</h2>
+
+    <div class="ledger-row">
+      <span class="ledger-index">01</span>
+      <div class="ledger-body">
+        <h3>Ingesta del material</h3>
+        <p>
+          El material cuestionado se incorpora desde el equipo del perito.
+          Se valida formato y tamaño antes de tocar la red: nada sale del
+          laboratorio sin pasar la verificación previa.
+        </p>
+      </div>
+      <span class="ledger-note mono-label">IMG · VIDEO ≤ 10 MB</span>
+    </div>
+
+    <div class="ledger-row">
+      <span class="ledger-index">02</span>
+      <div class="ledger-body">
+        <h3>Análisis por red convolucional</h3>
+        <p>
+          En video se muestrean fotogramas a intervalos regulares y cada uno
+          se examina por separado; en imagen, el examen es directo. La red
+          busca los artefactos que la síntesis facial deja en la textura.
+        </p>
+      </div>
+      <span class="ledger-note mono-label">CNN · SOFTMAX</span>
+    </div>
+
+    <div class="ledger-row">
+      <span class="ledger-index">03</span>
+      <div class="ledger-body">
+        <h3>Dictamen preliminar</h3>
+        <p>
+          El sistema emite un veredicto — auténtico o manipulado — con su
+          confianza porcentual, y lo asienta en el registro de casos del
+          equipo. El dictamen es una opinión técnica, no una prueba absoluta.
+        </p>
+      </div>
+      <span class="ledger-note mono-label">REGISTRO LOCAL</span>
+    </div>
+  </div>
+
+  <div class="scope">
+    <h2 class="ledger-title">Alcance metodológico</h2>
+    <p>
+      El modelo fue entrenado con rostros sintetizados por StyleGAN. Su
+      fiabilidad frente a otros métodos de generación —difusión, face swap
+      por herramientas comerciales recientes— no está garantizada, y ningún
+      resultado de este sistema debe presentarse como prueba concluyente por
+      sí solo. El peritaje serio declara sus límites: este es el nuestro.
+    </p>
+  </div>
+
+  <footer class="landing-footer">
+    <span class="mono-label">CertiFace v1.0.0</span>
+    <span>Autoría: Alyce Maldonado</span>
+  </footer>
+</section>

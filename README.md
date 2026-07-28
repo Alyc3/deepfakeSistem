@@ -1,17 +1,20 @@
 # CertiFace — Peritaje de Medios Digitales
 
 Sistema pericial para casos de **suplantación de identidad** (face swap y
-deepfake), compuesto por una **API de inferencia en FastAPI** y una **aplicación
-de escritorio multiplataforma en Electron**. El perito incorpora una imagen o un
-video con un rostro y el sistema emite un dictamen preliminar — **auténtico** o
-**manipulado** — con su confianza porcentual.
+deepfake), compuesto por una **API de inferencia en FastAPI** y una
+**aplicación web responsive construida en Astro con arquitectura hexagonal**.
+El perito incorpora una imagen o un video con un rostro y el sistema emite un
+dictamen preliminar — **auténtico** o **manipulado** — con su confianza
+porcentual.
 
 La aplicación tiene tres pantallas: una **landing** de presentación, un **login
-local** (perfil de perito con clave protegida por scrypt, sin servidor de
-identidad) y el **laboratorio** de análisis. La identidad visual usa una paleta
-de negros cálidos, naranja (`#EB4604`, manipulación/alerta) y verde moss
-(`#99A57D`, autenticidad), con tipografías Chakra Petch e IBM Plex empaquetadas
-en la aplicación.
+local** (perfil de perito con clave protegida por PBKDF2 en el propio
+navegador, sin servidor de identidad) y el **laboratorio** de análisis. Se usa
+igual desde un monitor de escritorio que desde una tableta o un teléfono: la
+misma interfaz se reorganiza en una sola columna sin perder ninguna sección.
+La identidad visual usa una paleta de negros cálidos, naranja (`#EB4604`,
+manipulación/alerta) y verde moss (`#99A57D`, autenticidad), con tipografías
+Chakra Petch e IBM Plex servidas por la propia aplicación.
 
 **Autoría:** Alyce Maldonado
 
@@ -22,11 +25,11 @@ en la aplicación.
 1. [Arquitectura general](#arquitectura-general)
 2. [Requisitos previos](#requisitos-previos)
 3. [Puesta en marcha del backend](#puesta-en-marcha-del-backend)
-4. [Puesta en marcha del cliente de escritorio](#puesta-en-marcha-del-cliente-de-escritorio)
-5. [Empaquetado para distribución](#empaquetado-para-distribución)
+4. [Puesta en marcha de la aplicación web](#puesta-en-marcha-de-la-aplicación-web)
+5. [Construcción y despliegue](#construcción-y-despliegue)
 6. [El modelo en detalle](#el-modelo-en-detalle)
 7. [El backend en detalle](#el-backend-en-detalle)
-8. [El cliente de escritorio en detalle](#el-cliente-de-escritorio-en-detalle)
+8. [La aplicación web en detalle](#la-aplicación-web-en-detalle)
 9. [Contrato de la API](#contrato-de-la-api)
 10. [Limitaciones conocidas](#limitaciones-conocidas)
 11. [Resolución de problemas](#resolución-de-problemas)
@@ -35,27 +38,31 @@ en la aplicación.
 
 ## Arquitectura general
 
-Son **dos procesos independientes** que se comunican por HTTP. El backend no
-sirve la interfaz: solo expone la API de inferencia.
+Son **dos piezas independientes** que se comunican por HTTP. El backend no
+sirve la interfaz: solo expone la API de inferencia. La aplicación web es un
+sitio estático que se ejecuta entero en el navegador del perito, así que el
+material analizado va del navegador al backend **sin intermediarios**.
 
 ```
-┌─────────────────────────────┐         ┌──────────────────────────────┐
-│  Aplicación de escritorio   │         │       Backend FastAPI        │
-│         (Electron)          │         │        (Python/PyTorch)      │
-│                             │         │                              │
-│  ┌───────────────────────┐  │         │  ┌────────────────────────┐  │
-│  │ Renderer (interfaz)   │  │         │  │ main.py    rutas HTTP  │  │
-│  │ HTML · CSS · JS       │  │         │  └───────────┬────────────┘  │
-│  └──────────┬────────────┘  │         │              │               │
-│             │ IPC           │         │   ┌──────────┴──────────┐    │
-│  ┌──────────┴────────────┐  │  HTTP   │   │ preprocessing.py    │    │
-│  │ Proceso principal     │──┼────────►│   │ (fotogramas, YuNet) │    │
-│  │ lectura de disco,     │  │  POST   │   └──────────┬──────────┘    │
-│  │ peticiones, ajustes   │◄─┼─────────│   ┌──────────┴──────────┐    │
-│  └───────────────────────┘  │  JSON   │   │ model.py + explain  │    │
-│                             │         │   │ 3 peritos + sonda   │    │
-└─────────────────────────────┘         │   └─────────────────────┘    │
-                                        └──────────────────────────────┘
+┌──────────────────────────────┐         ┌──────────────────────────────┐
+│  Aplicación web (Astro)      │         │       Backend FastAPI        │
+│  navegador del perito        │         │        (Python/PyTorch)      │
+│                              │         │                              │
+│  ┌────────────────────────┐  │         │  ┌────────────────────────┐  │
+│  │ ui/       vistas y     │  │         │  │ main.py    rutas HTTP  │  │
+│  │           controladores│  │         │  └───────────┬────────────┘  │
+│  ├────────────────────────┤  │         │              │               │
+│  │ application/ casos de  │  │  HTTP   │   ┌──────────┴──────────┐    │
+│  │           uso + puertos│──┼────────►│   │ preprocessing.py    │    │
+│  ├────────────────────────┤  │  POST   │   │ (fotogramas, YuNet) │    │
+│  │ domain/   reglas del   │  │         │   └──────────┬──────────┘    │
+│  │           peritaje     │  │  JSON   │   ┌──────────┴──────────┐    │
+│  ├────────────────────────┤◄─┼─────────│   │ model.py + explain  │    │
+│  │ infrastructure/        │  │         │   │ 3 peritos + sonda   │    │
+│  │   fetch · localStorage │  │         │   └─────────────────────┘    │
+│  └────────────────────────┘  │         │                              │
+└──────────────────────────────┘         └──────────────────────────────┘
+        ▲ dependencias siempre hacia dentro: ui → application → domain
 ```
 
 **Estructura del repositorio:**
@@ -81,25 +88,36 @@ deepfakeSistem/
 │   │   ├── Detector_De_Difusion_Facial/  # Perito 3: difusión moderna (355 MB)
 │   │   └── Sonda_De_Escena_Generada/     # Sonda de encuadre completo (2 GB)
 │   └── requirements.txt
-└── desktop/
+└── web/                       # Aplicación web (Astro + TypeScript)
     ├── src/
-    │   ├── main/              # Proceso principal de Electron (Node.js)
-    │   │   ├── main.js        # Ventana y canales IPC
-    │   │   ├── api.js         # Validación de archivos y llamadas HTTP
-    │   │   ├── auth.js        # Perfil local del perito (scrypt)
-    │   │   ├── store.js       # Ajustes, sesión e historial persistentes
-    │   │   ├── menu.js        # Menú nativo y atajos de teclado
-    │   │   └── preload.js     # Puente seguro hacia la interfaz
-    │   └── renderer/          # Interfaz (sin framework ni bundler)
-    │       ├── index.html     # Tres vistas: landing, login, laboratorio
-    │       ├── styles.css     # Sistema de tokens de la identidad CertiFace
-    │       └── renderer.js
-    ├── assets/
-    │   ├── fonts/             # Chakra Petch + IBM Plex (OFL, empaquetadas)
-    │   ├── art/reticle.svg    # Retícula pericial (generada)
-    │   └── sample-*.jpg       # Muestras de ejemplo
-    ├── build/icon.png         # Icono de la aplicación
-    └── package.json           # Objetivos de electron-builder
+    │   ├── domain/            # NÚCLEO — reglas del peritaje, sin navegador
+    │   │   ├── verdict.ts     # Dictámenes, nombres de peritos, leyenda ▸
+    │   │   ├── analysis.ts    # Contrato de la respuesta del backend
+    │   │   ├── evidence.ts    # Admisión del material (MIME, 10 MB)
+    │   │   ├── checklist.ts   # Peritaje manual y aritmética del desempate
+    │   │   ├── analyst.ts     # Perito y credenciales
+    │   │   ├── case-record.ts # Registro de casos
+    │   │   └── settings.ts    # Configuración del laboratorio
+    │   ├── application/       # CASOS DE USO Y PUERTOS
+    │   │   ├── ports/         # Contratos: API, ajustes, casos, credencial
+    │   │   └── use-cases/     # Analizar, acceder, registrar casos, ajustes
+    │   ├── infrastructure/    # ADAPTADORES — lo reemplazable
+    │   │   ├── http/          # API pericial sobre fetch
+    │   │   ├── storage/       # localStorage / sessionStorage
+    │   │   ├── crypto/        # PBKDF2 con Web Crypto
+    │   │   └── container.ts   # Raíz de composición (aquí se enchufa todo)
+    │   ├── ui/                # ADAPTADOR DE ENTRADA — la interfaz
+    │   │   ├── layouts/       # Envoltura del documento
+    │   │   ├── components/    # Landing, login, laboratorio (.astro)
+    │   │   ├── styles/        # Tokens de la identidad CertiFace
+    │   │   └── client/        # Controladores y presentadores (TypeScript)
+    │   └── pages/index.astro  # Única ruta: las tres vistas
+    ├── public/assets/
+    │   ├── fonts/             # Chakra Petch + IBM Plex (OFL)
+    │   ├── art/               # Retícula pericial e icono
+    │   └── muestras/          # Muestras de ejemplo
+    ├── astro.config.mjs
+    └── tsconfig.json          # Alias @domain, @application, @infrastructure, @ui
 ```
 
 ---
@@ -109,8 +127,9 @@ deepfakeSistem/
 | Componente | Requisito | Comprobación |
 |---|---|---|
 | Backend | Python 3.10 o superior | `python3 --version` |
-| Cliente | Node.js 22.12 o superior (lo exige Electron 43) | `node --version` |
-| Cliente | npm | `npm --version` |
+| Aplicación web | Node.js 22.12 o superior (lo exige Astro 7) | `node --version` |
+| Aplicación web | npm 9.6.5 o superior | `npm --version` |
+| Uso | Un navegador moderno (Chrome, Firefox, Edge, Safari) | — |
 
 No hace falta GPU: si no se detecta CUDA, PyTorch usa la CPU automáticamente
 (y la Sonda De Escena elige dispositivo según la VRAM libre). Tampoco hace
@@ -192,41 +211,51 @@ desde el navegador.
 **Prueba directa desde la terminal:**
 
 ```bash
-curl -F "file=@../desktop/assets/sample-fake.jpg" http://127.0.0.1:8000/predict
+curl -F "file=@../web/public/assets/muestras/sample-fake.jpg" http://127.0.0.1:8000/predict
 ```
 
 ---
 
-## Puesta en marcha del cliente de escritorio
+## Puesta en marcha de la aplicación web
 
 En **otra terminal**, con el backend ya en marcha:
 
 ```bash
-cd desktop
-npm install     # dependencias + binario de Electron (~150 MB)
-npm start
-```
-
-Para abrir además las herramientas de desarrollo:
-
-```bash
+cd web
+npm install     # Astro y su cadena de construcción (~90 paquetes)
 npm run dev
 ```
 
+Queda servida en `http://localhost:4321`. Para abrirla también desde otros
+equipos de la red (una tableta, otro portátil):
+
+```bash
+npm start       # equivale a: astro dev --host
+```
+
+> **Nota de seguridad del navegador:** el registro y el acceso del perito
+> derivan la clave con Web Crypto, que los navegadores solo ofrecen en
+> **contextos seguros** — `localhost` o `https://`. Si sirves el laboratorio
+> por `http://` contra una IP de la red, el acceso se rechaza con un aviso
+> explícito en lugar de degradarse a algo inseguro. Para uso en red, sirve la
+> aplicación por HTTPS.
+
 La URL del backend por defecto es `http://127.0.0.1:8000`. Se puede cambiar
 desde el panel de configuración de la propia aplicación (`Ctrl/Cmd+,`) y queda
-guardada entre sesiones: **no hay archivos `.env`**.
+guardada en el navegador: **no hay archivos `.env`**.
 
 ### Uso
 
 1. En la landing, pulsa **Iniciar peritaje**. La primera vez se registra el
    perfil del perito (credencial + clave de al menos 6 caracteres, guardadas
-   solo en este equipo con hash scrypt); las siguientes veces se inicia sesión.
+   solo en este navegador con hash PBKDF2); las siguientes veces se inicia
+   sesión.
 2. El laboratorio es un panel doble: a la **izquierda**, la cámara de
    evidencia con el material completo en su formato original (sin recortes),
    los controles y el registro de casos; a la **derecha**, el registro del
-   análisis paso a paso y el dictamen. Arrastra un archivo, haz clic para
-   abrir el diálogo del sistema, o usa las muestras de ejemplo.
+   análisis paso a paso y el dictamen. En pantallas estrechas las dos columnas
+   se apilan en ese mismo orden. Arrastra un archivo, haz clic para abrir el
+   selector del navegador, o usa las muestras de ejemplo.
 3. Pulsa **Ejecutar análisis**. Durante la inferencia, una línea de barrido
    recorre la vista previa y el registro muestra el progreso; al terminar,
    despliega cada etapa con sus datos reales — fotogramas, rostros, la señal
@@ -234,9 +263,15 @@ guardada entre sesiones: **no hay archivos `.env`**.
 4. El dictamen aparece como sello — **MANIPULADO** en naranja, **REAL** en
    moss o **INDICIOS** en ámbar — con su confianza y el desglose por modelo.
 5. Bajo el dictamen aparece el **mapa de calor explicativo** (EigenCAM
-   fusionado de todos los peritos, sobre el fotograma de mayor señal): las
-   zonas cálidas son las regiones que sustentaron el veredicto, con la
-   leyenda de ponderación por detector. Clic para ampliar.
+   fusionado de todos los peritos): las zonas coloreadas son las regiones que
+   sustentaron el veredicto, con la leyenda de ponderación por detector. El
+   color va por intensidad en escala de riesgo — verde bajo, amarillo medio,
+   naranja/rojo alto —, así que un material auténtico muestra zonas verdes.
+   En video hay **un mapa por cada fotograma analizado**: debajo del grande
+   se despliega la tira de los 24, cada uno con su segundo y su señal
+   coloreada por riesgo, y el destacado (▸) es el de mayor señal. Clic en
+   una miniatura —o `←` / `→`— para recorrerlos; clic en la imagen grande
+   para ampliarla.
 6. Si el dictamen queda en **INDICIOS**, se abre el **peritaje manual**: un
    checklist de seis observaciones (bordes del rostro, naturalidad de gestos,
    coherencia de iluminación, filtros, momentos sospechosos, origen del
@@ -255,35 +290,49 @@ volver a comprobar.
 |---|---|
 | `Ctrl/Cmd + O` | Abrir archivo |
 | `Ctrl/Cmd + Enter` | Ejecutar análisis |
-| `Ctrl/Cmd + R` | Limpiar la selección |
+| `Alt + N` | Nuevo examen (limpiar la selección) |
 | `Ctrl/Cmd + ,` | Configurar la URL del backend |
 | `Ctrl/Cmd + Shift + L` | Cerrar sesión |
+| `←` / `→` | Recorrer los mapas de calor de los fotogramas analizados |
+| `Esc` | Cerrar el mapa de calor ampliado o el panel de configuración |
+
+Sustituyen al menú de la aplicación de escritorio anterior. Se evitan a
+propósito las combinaciones que el navegador reserva para sí (`Ctrl+R`
+recarga la página), por eso «Nuevo examen» usa `Alt+N`.
 
 ---
 
-## Empaquetado para distribución
+## Construcción y despliegue
 
-Desde `desktop/`:
+Desde `web/`:
 
 | Comando | Resultado |
 |---|---|
-| `npm run pack` | Carpeta sin empaquetar en `dist/` (para probar) |
-| `npm run dist:linux` | `AppImage` + `.deb` |
-| `npm run dist:win` | Instalador `NSIS` + ejecutable portable |
-| `npm run dist:mac` | `.dmg` + `.zip` |
-| `npm run dist` | Los objetivos del sistema anfitrión |
+| `npm run dev` | Servidor de desarrollo con recarga en caliente (`:4321`) |
+| `npm run build` | Sitio estático en `web/dist/` |
+| `npm run preview` | Sirve lo construido, para comprobarlo antes de publicar |
+| `npm run check` | Comprobación de tipos de todo el proyecto |
 
-Los artefactos se generan en `desktop/dist/`.
+`npm run build` produce **HTML, CSS y JavaScript planos** en `web/dist/`: no
+hay servidor de Node en producción. Basta con copiar esa carpeta a cualquier
+alojamiento estático (Nginx, Apache, GitHub Pages, Netlify, Vercel, un
+`python -m http.server` para una demostración) y el laboratorio funciona.
 
-**Sobre la compilación cruzada:**
+Ten en cuenta que lo publicado es **únicamente la interfaz**. El backend es un
+proceso aparte que debe estar accesible desde el navegador del perito en la
+URL configurada, sea en la máquina local o en un servidor remoto.
 
-- Linux → Windows funciona si tienes `wine` instalado.
-- **Los paquetes de macOS solo pueden generarse desde macOS**, porque el
-  firmado y la creación del `.dmg` dependen de herramientas propias del sistema.
+**Recomendaciones para una publicación real:**
 
-Ten en cuenta que el paquete resultante contiene **únicamente el cliente**. El
-backend es un proceso aparte que debe estar accesible en la URL configurada,
-sea en la máquina local o en un servidor remoto.
+- **Sírvelo por HTTPS.** Además de lo evidente, Web Crypto —y con ella el
+  acceso del perito— solo está disponible en contextos seguros.
+- Si el backend queda en otro origen, mantén su CORS abierto (ya lo está) o
+  restringe `allow_origins` al dominio donde publiques la aplicación.
+- Cabeceras de seguridad recomendadas en el servidor web:
+  `Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:;
+  media-src 'self' blob:; connect-src *` (el `connect-src` abierto es
+  necesario porque la URL del backend la decide el perito), más
+  `X-Content-Type-Options: nosniff` y `Referrer-Policy: no-referrer`.
 
 ---
 
@@ -414,14 +463,17 @@ else:
     result = predict_image(contents)
 ```
 
-Por eso el cliente se preocupa de enviar el MIME correcto: si un `.mp4` llegara
-como `application/octet-stream`, el backend intentaría abrirlo como imagen y
-fallaría.
+Por eso la aplicación web se preocupa de enviar el MIME correcto: si un `.mp4`
+llegara como `application/octet-stream`, el backend intentaría abrirlo como
+imagen y fallaría. Como el navegador deja el tipo vacío en varios contenedores
+de video, el MIME se deduce de la extensión con una tabla explícita del
+dominio (`web/src/domain/evidence.ts`).
 
-El middleware CORS está abierto a cualquier origen (`allow_origins=["*"]`), algo
-heredado de la etapa en que el frontend era una página web. Con el cliente de
-escritorio ya no interviene, porque la petición sale de Node y no de un
-navegador.
+El middleware CORS está abierto a cualquier origen (`allow_origins=["*"]`) y
+**es imprescindible**: la petición la origina el navegador del perito, que
+suele estar en un origen distinto (`localhost:4321` → `127.0.0.1:8000`). Si se
+publica el laboratorio en un dominio fijo, puede restringirse `allow_origins`
+a ese dominio.
 
 ### `model.py` — orquestación de peritos y veredicto
 
@@ -457,10 +509,19 @@ completa de dónde salió el veredicto.
 
 Genera la evidencia visual del dictamen: **EigenCAM** (primer componente
 principal de las activaciones, vía SVD, sin gradientes ni dependencias
-externas) por cada perito que participó, fusionado en un único mapa
-ponderado por la señal de cada uno y superpuesto sobre el fotograma
-completo. Los detalles del método, los anclajes por arquitectura y la
-semántica de la intensidad están en el Paso 7 de
+externas) por cada perito que participó, fusionado por máximo ponderado y
+superpuesto sobre el fotograma completo.
+
+En video se produce **un mapa por cada fotograma analizado** (los 24), cada
+uno con la señal de su propio instante, más el destacado (el de mayor señal,
+el único que incorpora el CAM de la sonda de escena). Para que eso no cueste
+una segunda pasada de inferencia, `FacialCapture` engancha las capas de
+interés una sola vez y congela el EigenCAM de cada fotograma **mientras los
+peritos puntúan**: lo que se guarda es una rejilla de 7×7, 12×12 o 14×14, y
+el coste añadido es una SVD por fotograma.
+
+Los detalles del método, los anclajes por arquitectura y la semántica de la
+intensidad están en el Paso 7 de
 [backend/models/README.md](backend/models/README.md); el contrato del campo
 `explanation` está en la sección de la API.
 
@@ -496,110 +557,166 @@ cero) que producía antes.
 
 ---
 
-## El cliente de escritorio en detalle
+## La aplicación web en detalle
 
-### Los dos procesos de Electron
+### Arquitectura hexagonal (puertos y adaptadores)
 
-Electron separa el **proceso principal** (Node.js completo: disco, red, ventanas)
-del **renderer** (la interfaz, en un contexto de navegador). Aquí esa separación
-se respeta de forma estricta:
+La aplicación está organizada en cuatro capas con una única regla: **las
+dependencias apuntan siempre hacia dentro**. El dominio no sabe que existe un
+navegador; los casos de uso no saben que existe HTTP; solo los adaptadores
+conocen `fetch`, `localStorage` o el DOM.
 
-- El renderer **no** tiene acceso a Node (`nodeIntegration: false`) ni comparte
-  contexto con el preload (`contextIsolation: true`).
-- Toda comunicación pasa por los canales IPC declarados uno a uno en
-  `preload.js`. La interfaz solo ve las funciones expuestas en `window.api`.
+| Capa | Carpeta | Qué contiene | Qué **no** puede importar |
+|---|---|---|---|
+| Dominio | `src/domain/` | Reglas del peritaje: dictámenes, admisión del material, checklist, credenciales | Nada. Es TypeScript puro |
+| Aplicación | `src/application/` | Casos de uso y **puertos** (contratos) | Adaptadores concretos ni el DOM |
+| Infraestructura | `src/infrastructure/` | **Adaptadores**: cliente HTTP, repositorios de navegador, criptografía, raíz de composición | La interfaz |
+| Interfaz | `src/ui/` | Vistas `.astro`, controladores y presentadores | Adaptadores (solo casos de uso) |
 
-### Por qué las peticiones HTTP salen del proceso principal
+Los alias de `tsconfig.json` (`@domain`, `@application`, `@infrastructure`,
+`@ui`) hacen visible cada cruce de frontera de un vistazo.
 
-`src/main/api.js` lee el archivo del disco con `fs`, lo envuelve en un `Blob`
-con su MIME correcto y lo envía como `multipart/form-data`:
+**Recorrido de un análisis, capa a capa:**
 
-```js
-const form = new FormData();
-form.append("file", new Blob([buffer], { type: mime }), name);
+```
+ui/client/controllers/analysis.controller.ts   el perito pulsa "Ejecutar análisis"
+        ↓ llama al caso de uso (no sabe cómo se envía)
+application/use-cases/analyze-evidence.ts      recibe el puerto ForensicsApiPort
+        ↓ el contenedor le inyectó el adaptador
+infrastructure/http/http-forensics-api.ts      multipart/form-data → POST /predict
+        ↓ devuelve un AnalysisResult del dominio
+domain/analysis.ts + domain/verdict.ts         forma y vocabulario del dictamen
+        ↓
+ui/client/presenters/*.ts                      dictamen, mapa de calor, checklist
 ```
 
-Hacerlo aquí y no en la interfaz tiene tres ventajas concretas:
+La ventaja práctica: la aritmética del peritaje manual, las reglas de
+admisión del material y el vocabulario del dictamen se pueden probar sin
+levantar un navegador, y sustituir `fetch` por otro transporte —o
+`localStorage` por IndexedDB— es cambiar un archivo de `infrastructure/` y
+una línea de `container.ts`.
 
-1. **CORS deja de intervenir**, porque la petición no la origina un contexto de
-   navegador.
-2. El **MIME se determina por extensión** con una tabla explícita, en vez de
-   depender de lo que el sistema operativo declare. Es justo lo que el backend
-   necesita para distinguir imagen de video.
-3. La interfaz nunca manipula rutas ni contenidos del disco.
+### La raíz de composición
 
-La petición lleva un **tiempo límite de 3 minutos** vía `AbortController`, holgado
-a propósito porque la inferencia en CPU sobre un video puede tardar bastante.
+`src/infrastructure/container.ts` es el **único** sitio donde un adaptador se
+enchufa a un puerto:
 
-### Validación de archivos
+```ts
+const settings = createLocalSettingsRepository();
+// La API relee la URL en cada llamada: si el perito la cambia en el panel de
+// configuración, la siguiente petición ya sale a la nueva.
+const api = createHttpForensicsApi(() => settings.read().apiUrl);
 
-`inspectFile` (`src/main/api.js`) rechaza antes de enviar nada:
+return { analyzeEvidence: analyzeEvidence(api), /* … */ };
+```
 
-- extensiones fuera de la lista soportada (`.jpg`, `.png`, `.webp`, `.bmp`,
-  `.gif`, `.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`);
+La interfaz recibe un objeto de casos de uso ya montados y nunca importa un
+adaptador.
+
+### Por qué las peticiones salen directamente del navegador
+
+El material se envía como `multipart/form-data` desde el propio navegador del
+perito: no hay servidor intermedio que lo reciba, lo copie ni lo registre. Eso
+tiene tres consecuencias de diseño:
+
+1. **CORS vuelve a intervenir** — por eso el backend lo mantiene abierto (ver
+   `main.py`).
+2. El **MIME se determina por extensión** con la tabla del dominio, no por lo
+   que declare el navegador (que deja vacío el tipo de varios contenedores de
+   video). Es justo lo que el backend necesita para distinguir imagen de video.
+3. El adaptador HTTP es el **único** archivo del frontend que menciona rutas,
+   verbos o códigos de estado.
+
+La petición lleva un **tiempo límite de 3 minutos** vía `AbortController`,
+holgado a propósito porque la inferencia en CPU sobre un video puede tardar
+bastante; la comprobación de salud usa 5 segundos.
+
+### Admisión del material
+
+`inspectFile` (`src/domain/evidence.ts`) rechaza antes de enviar nada:
+
+- extensiones fuera de la lista soportada (`.jpg`, `.jpeg`, `.png`, `.webp`,
+  `.bmp`, `.gif`, `.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`);
 - archivos de más de **10 MB**;
-- rutas que no correspondan a un archivo real.
+- archivos vacíos o ilegibles.
 
-### La vista previa: Blob URL con autorización por archivo
+La misma función valida venga el archivo del selector, del arrastre o de las
+muestras de demostración: hay un solo punto de entrada (`admitFile`).
 
-Para mostrar la vista previa, la interfaz necesita leer un archivo del disco,
-pero darle acceso libre al sistema de archivos sería un riesgo innecesario. El
-canal IPC `file:preview` entrega los bytes **solo del archivo seleccionado en
-ese momento**, comprobando cada petición contra una lista de rutas
-autorizadas que se vacía en cada selección:
+### La vista previa
 
-```js
-if (!allowedPreviewPaths.has(normalized)) {
-  return { ok: false, error: "Archivo no autorizado para vista previa." };
-}
-```
+En el navegador los bytes ya están en el objeto `File` que entrega el usuario,
+así que la vista previa es directa: `URL.createObjectURL(file)` produce un
+Blob URL con el que el reproductor tiene duración, búsqueda y reproducción
+nativas. Cada Blob URL se revoca al seleccionar otro archivo para no acumular
+memoria. Esto sustituye a todo el puente de lectura de disco con autorización
+por archivo que necesitaba la versión de escritorio: aquí la aplicación nunca
+ve el sistema de archivos, solo el archivo que el perito le entrega.
 
-El renderer convierte esos bytes en un **Blob URL**
-(`URL.createObjectURL`), con el que el reproductor de Chromium tiene
-duración, búsqueda y reproducción nativas sin protocolo HTTP de por medio.
-Cargar el archivo en memoria es viable porque la validación previa lo acota
-a 10 MB, y cada Blob URL se revoca al seleccionar otro archivo. (Una versión
-anterior servía la vista previa con un protocolo `media://` propio con
-soporte de rangos; el stack de medios de Chromium resultó poco fiable sobre
-él y se sustituyó por esta vía más simple.)
+El material se muestra **completo, en su relación de aspecto original** — sin
+recortes: el perito debe ver el encuadre íntegro.
 
 ### Arrastrar y soltar
 
-Desde Electron 32 el objeto `File` **ya no expone `.path`**. La vía soportada es
-`webUtils.getPathForFile(file)`, que solo puede invocarse desde el preload
-(`src/main/preload.js`). Además se cancela el comportamiento por defecto de
-`dragover` y `drop` en toda la ventana; sin ello, soltar un archivo haría que la
-ventana navegase hacia él y la aplicación desaparecería.
+Se cancela el comportamiento por defecto de `dragover` y `drop` en toda la
+ventana; sin ello, soltar un archivo haría que el navegador lo abriese y
+abandonara el laboratorio. El archivo soltado llega por
+`event.dataTransfer.files` y pasa por la misma admisión que los demás.
 
-### Persistencia
+### Persistencia en el navegador
 
-`src/main/store.js` guarda un `settings.json` en el directorio de datos de
-usuario que da el sistema operativo (`app.getPath("userData")`):
+Los repositorios de `src/infrastructure/storage/` guardan:
 
-| Sistema | Ruta |
+| Clave | Almacén | Contenido |
+|---|---|---|
+| `certiface:settings` | `localStorage` | URL del backend |
+| `certiface:history` | `localStorage` | Últimos cinco casos (nombre, dictamen, confianza) |
+| `certiface:credential` | `localStorage` | Perfil del perito: credencial, sal y hash |
+| `certiface:session` | `sessionStorage` | Sesión abierta |
+
+La credencial persiste entre visitas, pero **la sesión vive solo mientras la
+pestaña esté abierta**: cerrarla obliga a identificarse de nuevo, que es lo
+prudente en un equipo compartido. El material analizado **nunca se guarda**.
+Si el almacenamiento está bloqueado (modo privado), el laboratorio sigue
+funcionando sin recordar nada entre visitas en lugar de fallar.
+
+### El acceso del perito
+
+El cliente de escritorio derivaba la clave con scrypt de Node. En el navegador
+el equivalente disponible es **PBKDF2-SHA-256 con 210 000 iteraciones** sobre
+Web Crypto, con sal aleatoria de 16 bytes y 64 bytes de salida; la comparación
+recorre siempre la longitud completa, sin salir antes en la primera
+diferencia. La clave nunca se guarda en claro y no hay servidor de identidad:
+es un control de acceso al puesto de trabajo, no un sistema multiusuario.
+
+Web Crypto solo existe en **contextos seguros**. Si el laboratorio se sirve por
+`http://` contra una IP de red, el acceso se rechaza con un mensaje explícito
+en lugar de recurrir a un hash débil.
+
+### La interfaz y el diseño responsive
+
+Astro genera un sitio estático: **no hay framework de interfaz en el
+navegador**, solo el HTML de las tres vistas y los controladores en
+TypeScript. Landing, login y laboratorio conviven en el mismo documento y un
+enrutador mínimo alterna su atributo `hidden`, igual que en la versión de
+escritorio.
+
+La identidad visual es un sistema de tokens CSS: paleta fija en modo oscuro,
+con el color siempre semántico (naranja = manipulación, moss = autenticidad).
+Las tipografías se sirven desde la propia aplicación como `@font-face`, así
+que no depende de ninguna red externa. Los márgenes laterales son fluidos
+(`clamp`), y los cortes son estos:
+
+| Ancho | Qué cambia |
 |---|---|
-| Linux | `~/.config/Deepfake Detector/settings.json` |
-| Windows | `%APPDATA%\Deepfake Detector\settings.json` |
-| macOS | `~/Library/Application Support/Deepfake Detector/settings.json` |
+| ≥ 1500 px | El banco de trabajo se ensancha a 1560 px |
+| ≤ 1020 px | El laboratorio pasa de dos columnas a una |
+| ≤ 900 px | El hero se apila; la ficha del protocolo pierde la columna de nota |
+| ≤ 720 px | La barra de estado salta a su propia línea, el dictamen apila sello y datos, los paneles pierden relleno y los botones ocupan el ancho |
+| ≤ 420 px | Se oculta la etiqueta `LAB·PERICIAL`, se compacta el registro y las opciones del checklist se reparten el ancho |
 
-Contiene la URL del backend, el historial de los últimos cinco análisis, el
-perfil del perito (credencial, sal y hash scrypt de la clave — nunca la clave en
-claro) y el estado de la sesión. Si el archivo no existe o está corrupto, se
-vuelve a los valores por defecto sin fallar.
-
-### La interfaz
-
-Sin framework y sin paso de compilación: `index.html`, `styles.css` y
-`renderer.js` planos. Las tres vistas (landing, login, laboratorio) conviven en
-el mismo documento y un enrutador mínimo alterna su atributo `hidden`. La
-identidad visual es un sistema de tokens CSS: paleta fija en modo oscuro, con el
-color siempre semántico (naranja = manipulación, moss = autenticidad). Las
-tipografías van empaquetadas como `@font-face`, así que la aplicación no
-depende de la red para nada salvo el backend. La política de seguridad de
-contenido declarada en el `<head>` prohíbe todo por defecto y solo permite
-recursos propios y los Blob URL de la vista previa. La animación de barrido
-respeta
-`prefers-reduced-motion`.
+Los campos de texto usan 16 px para que Safari en iOS no acerque la página al
+enfocarlos, y las animaciones de barrido respetan `prefers-reduced-motion`.
 
 ---
 
@@ -642,17 +759,39 @@ Cuerpo `multipart/form-data` con un único campo `file`.
     "second": 2.4,
     "weights": { "synthesis_gan": 0.031, "faceswap_dfdc": 0.978, "diffusion_modern": 0.042 },
     "width": 720,
-    "height": 405
+    "height": 405,
+    "featured_index": 11,
+    "frames": [
+      {
+        "index": 0,
+        "second": 0.0,
+        "signal": 0.1204,
+        "image": "data:image/jpeg;base64,…",
+        "weights": { "synthesis_gan": 0.02, "faceswap_dfdc": 0.12, "diffusion_modern": 0.03 },
+        "width": 640,
+        "height": 360
+      }
+    ]
   }
 }
 ```
 
 `explanation` es opcional y aditivo: el **mapa de calor explicativo**
-(EigenCAM fusionado de todos los peritos que participaron) superpuesto sobre
-el fotograma de mayor señal (`second`; `null` en imágenes), como data URI
-JPEG con lado mayor ≤ 720 px. `weights` son las señales por-fotograma que
-ponderaron la fusión. Si el cálculo del mapa falla, el campo simplemente no
-aparece — el veredicto nunca depende de él.
+(EigenCAM fusionado por máximo ponderado de todos los peritos que
+participaron) superpuesto sobre el fotograma de mayor señal (`second`;
+`null` en imágenes), como data URI JPEG con lado mayor ≤ 720 px. `weights`
+son las señales por-fotograma que ponderaron la fusión.
+
+En video, `frames` trae **un mapa por cada fotograma analizado** (los 24),
+cada uno con su `index` en la secuencia, su `second`, su `signal` (la mayor
+de sus tres señales, la que fija su color dominante) y las `weights` de ese
+instante concreto, con lado mayor ≤ 640 px. `featured_index` señala cuál de
+ellos es el destacado. En imágenes `frames` no aparece: solo hay un mapa. Si
+el cálculo falla —de un fotograma o de todos— el campo o la entrada
+simplemente no aparecen: el veredicto nunca depende de ellos.
+
+Una respuesta de video con los 24 mapas pesa del orden de **1–3 MB**. Es el
+precio de que el dictamen viaje con su evidencia visual completa.
 
 `prediction` es la cadena `"Real"`, `"Fake"` o `"Suspect"`, y `confidence` un
 porcentaje entre 0 y 100 redondeado a dos decimales.
@@ -706,7 +845,7 @@ las reglas de reserva y verificación descritas arriba.
 
 **Errores:** si el video no se puede decodificar (códec no soportado), el
 endpoint responde `422` con un campo `detail` que explica la causa; la
-aplicación de escritorio muestra ese mensaje tal cual.
+aplicación web muestra ese mensaje tal cual en el registro del análisis.
 
 ---
 
@@ -742,10 +881,11 @@ aplicación de escritorio muestra ese mensaje tal cual.
 |---|---|
 | `FileNotFoundError: models/Detector_De_Sintesis_GAN.pth` | Lanzaste `uvicorn` desde otro directorio. Hazlo desde `backend/`. |
 | `Form data requires "python-multipart"` | Falta esa dependencia: `pip install -r requirements.txt`. |
-| La app dice «Backend no disponible» | El backend no está arrancado, o la URL configurada no coincide. Verifica con `curl http://127.0.0.1:8000/` y revísala en `Ctrl/Cmd+,`. |
-| `Error: Electron failed to install correctly` | El binario no se descargó. Ejecuta `npx install-electron` dentro de `desktop/`. |
-| Un video se analiza como si fuera imagen | La extensión no está en la tabla de MIME de `src/main/api.js`. Añádela allí. |
+| La barra de estado dice «Backend fuera de línea» | El backend no está arrancado, o la URL configurada no coincide. Verifica con `curl http://127.0.0.1:8000/` y revísala en `Ctrl/Cmd+,`. |
+| El acceso dice que el navegador no ofrece criptografía segura | Estás sirviendo el laboratorio por `http://` contra una IP. Web Crypto solo existe en contextos seguros: usa `localhost` o publica por HTTPS. |
+| «Failed to fetch» al analizar, con el backend en marcha | El navegador bloqueó la petición por CORS o por contenido mixto (página HTTPS llamando a un backend HTTP). Revisa `allow_origins` en `backend/app/main.py` y sirve ambos por el mismo esquema. |
+| Un video se analiza como si fuera imagen | La extensión no está en la tabla de MIME de `web/src/domain/evidence.ts`. Añádela allí. |
 | Todo video da el mismo veredicto | Revisa el log del backend: `faces_detected` por fotograma y los `p_fake` individuales dicen si el detector encuentra el rostro y cómo puntúa cada fotograma. Si `rostro=no` en todos, el material no tiene caras detectables de frente. |
 | El video no se puede decodificar (HTTP 422) | El códec no lo soporta OpenCV. Recodifica a MP4/H.264, por ejemplo: `ffmpeg -i entrada -c:v libx264 -crf 23 salida.mp4`. |
-| El análisis de un video se agota por tiempo | En CPU los tres peritos faciales suman ~2 s por fotograma (~45–55 s por video), más la sonda de escena (~30 s por sonda) cuando el caso la requiere y ~2–5 s del mapa de calor. Si se agota, sube el límite en la llamada a `predict` de `src/main/api.js` o reduce `max_frames` en `extract_frames`. |
-| La vista previa aparece en blanco | El formato del contenedor de video no lo soporta Chromium (por ejemplo, ciertos `.mkv`). El análisis sigue funcionando: la vista previa y la inferencia son independientes. |
+| El análisis de un video se agota por tiempo | En CPU los tres peritos faciales suman ~2 s por fotograma (~45–55 s por video), más la sonda de escena (~30 s por sonda) cuando el caso la requiere y ~2–5 s del mapa de calor. Si se agota, sube `PREDICT_TIMEOUT_MS` en `web/src/infrastructure/http/http-forensics-api.ts` o reduce `max_frames` en `extract_frames`. |
+| La vista previa aparece en blanco | El formato del contenedor de video no lo soporta el navegador (por ejemplo, ciertos `.mkv`). El análisis sigue funcionando: la vista previa y la inferencia son independientes. |

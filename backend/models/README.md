@@ -190,18 +190,29 @@ directa en la línea de tiempo.
 
 ### Paso 7 — Mapa De Calor Explicativo (EigenCAM)
 
-Para que el perito respalde el dictamen, el sistema genera **un único mapa de
-calor que fusiona la atención de todos los peritos que participaron**,
-superpuesto sobre el fotograma de mayor señal (el más incriminatorio; en
-imágenes, la imagen misma). Implementado en `backend/app/explain.py` sin
-dependencias externas.
+Para que el perito respalde el dictamen, el sistema genera **un mapa de calor
+que fusiona la atención de todos los peritos que participaron**, superpuesto
+sobre el fotograma completo. En video no se produce uno solo: se produce
+**uno por cada fotograma analizado (los 24)**, cada uno coloreado con la
+señal de su propio instante, más el **destacado** — el de mayor señal, el
+único que puede incorporar el CAM de la sonda de escena, cuya lectura es
+global y no por fotograma. Así el perito no ve una foto fija de la evidencia,
+sino cómo evoluciona la atención de los detectores a lo largo del video.
+Implementado en `backend/app/explain.py` sin dependencias externas.
 
 **Método.** EigenCAM: primer componente principal (SVD) de las activaciones
 de la última capa de cada modelo — sin gradientes, aplicable a CNN y ViT por
-igual. Anclajes: `extract_features` del B0 (7×7), `encoder.bn2` del B7
-(12×12, con el letterbox de entrada deshecho), `post_layernorm` del SigLIP
-facial (parches 14×14) y de la torre SigLIP del ensemble de escena (cuando
-la sonda participó con peso ≥ 0.05).
+igual. Anclajes: `_bn1` + swish del B0 (7×7, el mismo tensor que devuelve
+`extract_features`), `encoder.bn2` del B7 (12×12, con el letterbox de entrada
+deshecho), `post_layernorm` del SigLIP facial (parches 14×14) y de la torre
+SigLIP del ensemble de escena (cuando la sonda participó).
+
+**Coste.** Calcular 24 mapas re-ejecutando los modelos costaría una segunda
+pasada de inferencia completa. En su lugar, `FacialCapture` engancha las tres
+capas **una sola vez** y congela el EigenCAM de cada fotograma según se
+puntúa: lo que se guarda es una rejilla diminuta (7×7, 12×12, 14×14) y el
+coste añadido es la SVD por fotograma, del orden de milisegundos. El mapa de
+los 24 fotogramas sale, en la práctica, gratis.
 
 **Fusión.** Cada mapa se normaliza 0-1; los faciales se reubican en la caja
 del rostro dentro del fotograma completo y el de escena cubre el encuadre
@@ -224,9 +235,20 @@ muestran **todas** las zonas de atención (el mapa se suaviza en manchas
 orgánicas y solo se descarta el ruido puntual sin área mínima), en degradado
 continuo, sin contornos duros; el CAM de escena recibe además un difuminado
 agresivo que lava su moteado característico. Recuadro naranja en el rostro
-analizado. El resultado viaja en el campo `explanation` de la respuesta
-(JPEG base64, lado ≤ 720 px) y la interfaz lo muestra bajo el dictamen con
-la leyenda de ponderaciones. Un fallo del mapa nunca afecta al veredicto.
+analizado.
+
+La zona se dibuja **siempre que haya atención, por débil que sea la señal**:
+lo que cambia con la intensidad es el color (y algo la opacidad), no la
+existencia del mapa. Esto es deliberado — un suelo de intensidad alto dejaba
+los fotogramas auténticos en gris, sin una sola mancha, y el perito no podía
+distinguir «riesgo bajo» de «el mapa no funciona». Que un material auténtico
+salga en verde **es** el resultado correcto.
+
+El resultado viaja en el campo `explanation` de la respuesta: el destacado
+(JPEG base64, lado ≤ 720 px) más `frames[]`, un mapa por fotograma analizado
+(lado ≤ 640 px) con su segundo, su señal y sus ponderaciones. La interfaz
+muestra el destacado en grande y la tira completa debajo, recorrible. Un
+fallo del mapa —de uno o de todos— nunca afecta al veredicto.
 
 ### Imágenes
 

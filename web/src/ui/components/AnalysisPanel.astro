@@ -1,0 +1,98 @@
+---
+/**
+ * Columna derecha del laboratorio: traza paso a paso del análisis, dictamen,
+ * mapa de calor explicativo y peritaje manual para resolver los indicios.
+ */
+---
+
+<section class="analysis">
+  <div class="analysis-head">
+    <h2 class="mono-label">Registro del análisis</h2>
+    <span id="analysis-elapsed" class="mono-label" hidden></span>
+  </div>
+  <ol id="analysis-log" class="analysis-log" aria-live="polite">
+    <li class="log-line log-line--idle">A la espera de material…</li>
+  </ol>
+
+  <section id="result" class="dictamen" hidden>
+    <div class="dictamen-head">
+      <h2 id="result-title" class="mono-label">Dictamen preliminar</h2>
+      <span id="result-frames" class="mono-label" hidden></span>
+    </div>
+    <div class="dictamen-body">
+      <span id="result-stamp" class="stamp">MANIPULADO</span>
+      <div class="dictamen-data">
+        <p id="result-confidence" class="dictamen-confidence"></p>
+        <div class="confidence-track">
+          <div id="result-bar" class="confidence-bar"></div>
+        </div>
+        <p id="result-models" class="mono-label" hidden></p>
+        <p id="result-suspects" class="mono-label" hidden></p>
+        <p id="result-caveat" class="caveat" hidden></p>
+        <p class="dictamen-scope">
+          Cada detector estima por separado la probabilidad de su
+          familia de manipulación; el dictamen y su confianza los fija
+          la señal más alta (▸). Opinión técnica preliminar:
+          contrastar con otros métodos antes de concluir.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section id="heatmap" class="heatmap" hidden>
+    <div class="heatmap-head">
+      <h2 class="mono-label">Mapa de calor — evidencia visual</h2>
+      <span id="heatmap-frame" class="mono-label"></span>
+    </div>
+    <figure id="heatmap-figure" class="heatmap-figure">
+      <img id="heatmap-image" alt="Mapa de calor: regiones que sustentan el dictamen" />
+    </figure>
+    <p id="heatmap-weights" class="mono-label"></p>
+
+    <div id="heatmap-strip-wrap" class="heatmap-strip-wrap" hidden>
+      <div class="heatmap-strip-head">
+        <h3 id="heatmap-strip-title" class="mono-label">Fotogramas analizados</h3>
+        <span class="mono-label">CLIC O ← → PARA RECORRER</span>
+      </div>
+      <div
+        id="heatmap-strip"
+        class="heatmap-strip"
+        role="listbox"
+        aria-label="Mapa de calor de cada fotograma analizado"
+      ></div>
+    </div>
+
+    <p class="heatmap-scope">
+      La evidencia se muestra en escala de grises: todo color es
+      señal de los detectores, nunca color propio de la imagen. El
+      color codifica la intensidad — <span class="risk-green">verde
+      riesgo bajo</span>, <span class="risk-yellow">amarillo
+      medio</span>, <span class="risk-red">naranja/rojo alto</span>:
+      un material auténtico muestra zonas verdes suaves y uno
+      manipulado núcleos rojos. Cada punto refleja al perito con
+      mayor evidencia en él (EigenCAM, máximo ponderado por señal).
+      El recuadro naranja delimita el rostro analizado. En video hay
+      un mapa por cada fotograma analizado, cada uno coloreado con la
+      señal de su propio instante; el destacado (▸) es el de mayor
+      señal. Clic en la imagen grande para ampliar.
+    </p>
+  </section>
+
+  <section id="checklist" class="checklist" hidden>
+    <div class="checklist-head">
+      <h2 class="mono-label">Peritaje manual — resolver indicios</h2>
+    </div>
+    <p class="checklist-hint">
+      Los modelos no alcanzan un veredicto concluyente. Revisa el
+      material en la cámara de evidencia y responde: el dictamen
+      final combinará estas observaciones con las métricas.
+    </p>
+    <div id="checklist-items" class="checklist-items"></div>
+    <div class="checklist-footer">
+      <span id="checklist-score" class="mono-label"></span>
+      <button id="checklist-submit" class="primary-button" type="button" disabled>
+        Emitir dictamen final
+      </button>
+    </div>
+  </section>
+</section>
