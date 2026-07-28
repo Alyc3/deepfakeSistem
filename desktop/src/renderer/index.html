@@ -263,6 +263,29 @@
               </div>
             </section>
 
+            <section id="heatmap" class="heatmap" hidden>
+              <div class="heatmap-head">
+                <h2 class="mono-label">Mapa de calor — evidencia visual</h2>
+                <span id="heatmap-frame" class="mono-label"></span>
+              </div>
+              <figure id="heatmap-figure" class="heatmap-figure">
+                <img id="heatmap-image" alt="Mapa de calor: regiones que sustentan el dictamen" />
+              </figure>
+              <p id="heatmap-weights" class="mono-label"></p>
+              <p class="heatmap-scope">
+                La evidencia se muestra en escala de grises: todo color es
+                señal de los detectores, nunca color propio de la imagen. El
+                color codifica la intensidad — <span class="risk-green">verde
+                riesgo bajo</span>, <span class="risk-yellow">amarillo
+                medio</span>, <span class="risk-red">naranja/rojo alto</span>:
+                un material auténtico muestra zonas verdes suaves y uno
+                manipulado núcleos rojos. Cada punto refleja al perito con
+                mayor evidencia en él (EigenCAM, máximo ponderado por señal).
+                El recuadro naranja delimita el rostro analizado. Clic para
+                ampliar.
+              </p>
+            </section>
+
             <section id="checklist" class="checklist" hidden>
               <div class="checklist-head">
                 <h2 class="mono-label">Peritaje manual — resolver indicios</h2>

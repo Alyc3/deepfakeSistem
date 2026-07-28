@@ -7,7 +7,7 @@ from efficientnet_pytorch import EfficientNet
 from PIL import Image
 from torchvision import transforms
 
-from app import diffusion_model, faceswap_model, scene_model
+from app import diffusion_model, explain, faceswap_model, scene_model
 from app.preprocessing import crop_largest_face
 
 logger = logging.getLogger("certiface.model")
@@ -93,11 +93,21 @@ CAVEAT_CLOSEUP = (
 # esta franja el sistema no certifica nada: decide la sonda de escena.
 GRAY_LIMIT = 0.25
 
-# Verificación de escena para veredictos "Real": por encima de este valor el
-# entorno se considera no concluyente y el veredicto baja a "Suspect". Las
-# escenas de video auténtico observadas puntúan 0.25-0.29; el margen hasta
-# 0.35 absorbe ese ruido.
-SCENE_SUSPECT_LIMIT = 0.35
+# Umbrales de la Sonda De Escena, calibrados con las lecturas acumuladas
+# sobre material auténtico: 0.246, 0.286, 0.467 y 0.482 — su ruido sobre
+# video real llega casi a 0.5, así que ningún umbral de esa zona es seguro.
+#
+# - SUSPECT (0.55): por encima, el entorno es no concluyente → "Suspect".
+# - SOLO (0.75): condena EN SOLITARIO (peritos faciales en silencio); exige
+#   un margen amplio sobre el ruido real porque no hay corroboración.
+# - CONFIRM (0.6): confirma una condena facial ya existente (ruta de
+#   reserva); el listón es menor porque hay dos señales coincidentes.
+#
+# Pendiente de contraste: aún no hay lecturas de escena sobre video generado
+# — cuando existan, estos tres valores deben revisarse con ellas.
+SCENE_SUSPECT_LIMIT = 0.55
+SCENE_SOLO_LIMIT = 0.75
+SCENE_CONFIRM_LIMIT = 0.6
 
 CAVEAT_WEAK = (
     "Señal débil de generación: por debajo del umbral de condena, pero por "
@@ -161,7 +171,7 @@ def _resolve_reservation(
 
     if len(context_images) >= min_eligible:
         ctx = _scene_probe(context_images)
-        if ctx > 0.5:
+        if ctx > SCENE_CONFIRM_LIMIT:
             outcome = "generación global (condena plena)"
         elif ctx < SCENE_CLEAN_LIMIT and face_signal < STRONG_FACE_LIMIT:
             outcome = "señal facial moderada con entorno limpio (filtro; Real con nota)"
@@ -169,7 +179,7 @@ def _resolve_reservation(
             outcome = "firma localizada o señal fuerte (reserva)"
         logger.info("Sonda de escena (contraprueba): mediana=%.4f → %s", ctx, outcome)
 
-        if ctx > 0.5:
+        if ctx > SCENE_CONFIRM_LIMIT:
             return "Fake", None, ctx, None
         if ctx < SCENE_CLEAN_LIMIT and face_signal < STRONG_FACE_LIMIT:
             # La confianza se apoya en la evidencia no contaminada: el
@@ -193,8 +203,12 @@ def _verify_real(label, confidence, generation_signal, probe_images):
     evidencia disponible es el encuadre completo. La sonda actúa como
     segunda opinión sistemática antes de certificar:
 
-    - escena > 0.5 → generación global → condena plena;
-    - escena ≥ 0.35, o señal facial en zona gris (≥ 0.25) → "Suspect";
+    - escena > SCENE_SOLO_LIMIT (0.75) → generación global → condena plena
+      (el listón alto es deliberado: aquí la sonda condena EN SOLITARIO,
+      con los peritos faciales en silencio, y su ruido sobre material real
+      llega casi a 0.5);
+    - escena ≥ SCENE_SUSPECT_LIMIT (0.55), o señal facial en zona gris
+      (≥ 0.25) → "Suspect";
     - escena limpia y señal facial baja → "Real" verificado (la lectura de
       escena queda registrada en la respuesta como evidencia positiva).
 
@@ -206,7 +220,7 @@ def _verify_real(label, confidence, generation_signal, probe_images):
     scene = _scene_probe(probe_images) if probe_images else None
 
     if scene is not None:
-        if scene > 0.5:
+        if scene > SCENE_SOLO_LIMIT:
             outcome = "generación global (condena plena)"
         elif scene >= SCENE_SUSPECT_LIMIT or generation_signal >= GRAY_LIMIT:
             outcome = "no concluyente (inconcluso)"
@@ -216,7 +230,7 @@ def _verify_real(label, confidence, generation_signal, probe_images):
             "Sonda de escena (verificación de Real): mediana=%.4f → %s",
             scene, outcome,
         )
-        if scene > 0.5:
+        if scene > SCENE_SOLO_LIMIT:
             return "Fake", round(scene * 100, 2), None, scene
         if scene >= SCENE_SUSPECT_LIMIT or generation_signal >= GRAY_LIMIT:
             signal = max(scene, generation_signal)
@@ -232,7 +246,7 @@ def _verify_real(label, confidence, generation_signal, probe_images):
 
 def predict_image(image_bytes: bytes):
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    face, found = crop_largest_face(image)
+    face, found, bbox = crop_largest_face(image)
     if not found:
         logger.warning(
             "Imagen %dx%d: no se detectó rostro; se analiza la imagen completa "
@@ -285,6 +299,18 @@ def predict_image(image_bytes: bytes):
         result["models"]["scene_generated"] = round(ctx, 4)
     if caveat:
         result["caveat"] = caveat
+
+    # Mapa de calor explicativo: fusiona los CAM de todos los peritos que
+    # participaron. Un fallo aquí nunca afecta al veredicto.
+    weights = {"synthesis_gan": p_gan, "faceswap_dfdc": p_swap, "diffusion_modern": p_diff}
+    if ctx is not None:
+        weights["scene_generated"] = ctx
+    try:
+        explanation = explain.build_explanation(image, bbox, weights)
+        if explanation:
+            result["explanation"] = explanation
+    except Exception:
+        logger.exception("No se pudo generar el mapa de calor; el dictamen se emite sin él.")
     return result
 
 
@@ -298,9 +324,12 @@ def predict_video(frames):
     context_candidates = []  # encuadres completos donde el rostro no domina
     suspects = []
     faces_found = 0
+    # Fotograma más incriminatorio, para el mapa de calor explicativo:
+    # (señal, frame, bbox, timestamp, p_gan, p_swap, p_diff)
+    best = None
 
     for i, (frame, timestamp) in enumerate(frames):
-        face, found = crop_largest_face(frame)
+        face, found, bbox = crop_largest_face(frame)
         faces_found += int(found)
         p_gan = _fake_probability(face)
         p_swap = faceswap_model.fake_probability(face)
@@ -308,6 +337,9 @@ def predict_video(frames):
         gan_scores.append(p_gan)
         swap_scores.append(p_swap)
         diff_scores.append(p_diff)
+        signal = max(p_gan, p_swap, p_diff)
+        if best is None or signal > best[0]:
+            best = (signal, frame, bbox, timestamp, p_gan, p_swap, p_diff)
         if found:
             face_fraction = (face.width * face.height) / (frame.width * frame.height)
             if face_fraction <= CONTEXT_FACE_MAX_FRACTION:
@@ -390,4 +422,26 @@ def predict_video(frames):
         result["models"]["scene_generated"] = round(ctx, 4)
     if caveat:
         result["caveat"] = caveat
+
+    # Mapa de calor explicativo sobre el fotograma más incriminatorio, con
+    # los scores por-fotograma de ese instante como pesos de la fusión. Un
+    # fallo aquí nunca afecta al veredicto.
+    if best is not None:
+        weights = {
+            "synthesis_gan": best[4],
+            "faceswap_dfdc": best[5],
+            "diffusion_modern": best[6],
+        }
+        if ctx is not None:
+            weights["scene_generated"] = ctx
+        try:
+            explanation = explain.build_explanation(
+                best[1], best[2], weights, second=best[3]
+            )
+            if explanation:
+                result["explanation"] = explanation
+        except Exception:
+            logger.exception(
+                "No se pudo generar el mapa de calor; el dictamen se emite sin él."
+            )
     return result

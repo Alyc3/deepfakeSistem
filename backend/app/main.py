@@ -55,8 +55,16 @@ async def predict(file: UploadFile = File(...)):
     else:
         result = predict_image(contents)
 
+    # El mapa de calor va como data URI base64: se resume en el log para no
+    # inundarlo.
+    loggable = {k: v for k, v in result.items() if k != "explanation"}
+    if "explanation" in result:
+        exp = result["explanation"]
+        loggable["explanation"] = (
+            f"<mapa de calor {exp['width']}x{exp['height']}, t={exp['second']}>"
+        )
     logger.info(
         "Respuesta /predict en %.2f s: %s",
-        time.perf_counter() - started, result,
+        time.perf_counter() - started, loggable,
     )
     return result

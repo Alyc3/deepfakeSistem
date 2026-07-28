@@ -49,6 +49,11 @@ const el = {
   checklistItems: document.getElementById("checklist-items"),
   checklistScore: document.getElementById("checklist-score"),
   checklistSubmit: document.getElementById("checklist-submit"),
+  heatmap: document.getElementById("heatmap"),
+  heatmapFigure: document.getElementById("heatmap-figure"),
+  heatmapImage: document.getElementById("heatmap-image"),
+  heatmapFrame: document.getElementById("heatmap-frame"),
+  heatmapWeights: document.getElementById("heatmap-weights"),
   resultBar: document.getElementById("result-bar"),
   resultFrames: document.getElementById("result-frames"),
   reset: document.getElementById("reset"),
@@ -321,6 +326,9 @@ function clearResult() {
   el.result.hidden = true;
   el.resultFrames.hidden = true;
   el.resultBar.style.width = "0%";
+  el.heatmap.hidden = true;
+  el.heatmapImage.removeAttribute("src");
+  el.heatmapFigure.classList.remove("expanded");
   el.checklist.hidden = true;
   el.checklistItems.replaceChildren();
   el.checklistScore.textContent = "";
@@ -383,6 +391,7 @@ async function analyze() {
 
   await renderAnalysisSteps(response.result);
   renderResult(response.result);
+  renderHeatmap(response.result);
   if (response.result.prediction === "Suspect") {
     showChecklist(response.result);
   }
@@ -460,6 +469,11 @@ async function renderAnalysisSteps(result) {
     await wait(STEP);
   }
 
+  if (result.explanation) {
+    addLog("Mapa de calor explicativo generado (EigenCAM fusionado de los peritos)");
+    await wait(STEP);
+  }
+
   const verdict = VERDICTS[result.prediction] || VERDICTS.Real;
   addLog(
     `Dictamen: ${verdict.stamp} (${result.confidence}%)`,
@@ -474,6 +488,26 @@ const VERDICTS = {
   // dictamina; señala y deja la decisión al perito.
   Suspect: { key: "suspect", stamp: "INDICIOS", confidenceLabel: "Señal de generación" },
 };
+
+// Nombres de los detectores tal como los muestra la interfaz, compartidos por
+// el desglose del dictamen y la leyenda del mapa de calor.
+const MODEL_NAMES = {
+  synthesis_gan: "GAN",
+  faceswap_dfdc: "FACE SWAP",
+  diffusion_modern: "DIFUSIÓN",
+  scene_generated: "ESCENA",
+};
+
+const pctOf = (v) => `${(v * 100).toFixed(1)}%`;
+
+// Línea "▸ DOMINANTE x% · resto…" a partir de un dict {clave: señal}.
+function signalLegend(signals) {
+  return Object.entries(signals)
+    .filter(([key]) => MODEL_NAMES[key])
+    .sort((a, b) => b[1] - a[1])
+    .map(([key, value], i) => `${i === 0 ? "▸ " : ""}${MODEL_NAMES[key]} ${pctOf(value)}`)
+    .join(" · ");
+}
 
 function renderResult(result) {
   // El backend responde "Real", "Fake" o "Suspect" (backend/app/model.py).
@@ -493,20 +527,8 @@ function renderResult(result) {
   }
 
   if (result.models) {
-    const pct = (v) => `${(v * 100).toFixed(1)}%`;
-    const names = {
-      synthesis_gan: "GAN",
-      faceswap_dfdc: "FACE SWAP",
-      diffusion_modern: "DIFUSIÓN",
-      scene_generated: "ESCENA",
-    };
     // Orden descendente; la señal que fija el dictamen va marcada con ▸.
-    const entries = Object.entries(result.models)
-      .filter(([key]) => names[key])
-      .sort((a, b) => b[1] - a[1]);
-    el.resultModels.textContent = entries
-      .map(([key, value], i) => `${i === 0 ? "▸ " : ""}${names[key]} ${pct(value)}`)
-      .join(" · ");
+    el.resultModels.textContent = signalLegend(result.models);
     el.resultModels.hidden = false;
   } else {
     el.resultModels.hidden = true;
@@ -541,6 +563,23 @@ function renderResult(result) {
   }
 
   el.result.hidden = false;
+}
+
+/* ---------- mapa de calor explicativo ---------- */
+
+function renderHeatmap(result) {
+  const exp = result.explanation;
+  if (!exp?.image) {
+    el.heatmap.hidden = true;
+    return;
+  }
+  el.heatmapImage.src = exp.image;
+  el.heatmapFrame.textContent =
+    exp.second != null
+      ? `FOTOGRAMA t=${exp.second}s — EL DE MAYOR SEÑAL`
+      : "IMAGEN ANALIZADA";
+  el.heatmapWeights.textContent = `PONDERACIÓN: ${signalLegend(exp.weights || {})}`;
+  el.heatmap.hidden = false;
 }
 
 /* ---------- peritaje manual: checklist para resolver INDICIOS ---------- */
@@ -786,6 +825,9 @@ function wireEvents() {
   el.analyze.addEventListener("click", analyze);
   el.reset.addEventListener("click", resetAll);
   el.checklistSubmit.addEventListener("click", emitFinalVerdict);
+  el.heatmapFigure.addEventListener("click", () => {
+    el.heatmapFigure.classList.toggle("expanded");
+  });
   el.historyClear.addEventListener("click", clearHistory);
   el.settingsToggle.addEventListener("click", () => toggleSettings());
   el.settingsSave.addEventListener("click", saveApiUrl);

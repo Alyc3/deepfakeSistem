@@ -681,6 +681,66 @@ button:focus-visible, input:focus-visible {
   animation: pulse 1.2s ease-in-out infinite;
 }
 
+/* --- mapa de calor explicativo --- */
+
+.heatmap {
+  margin-top: 24px;
+  border: 1px solid var(--eerie-light);
+  border-radius: var(--radius);
+  background: var(--night);
+  padding: 20px;
+}
+
+.heatmap-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.heatmap-figure {
+  margin: 0 0 12px;
+  border: 1px solid var(--eerie-light);
+  background: #000;
+}
+.heatmap-figure img {
+  width: 100%;
+  height: auto;
+  display: block;
+  cursor: zoom-in;
+}
+
+/* Ampliado: la figura pasa a superposición centrada sobre la ventana. */
+.heatmap-figure.expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(16, 12, 11, 0.92);
+  border: none;
+  margin: 0;
+  padding: 32px;
+}
+.heatmap-figure.expanded img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  cursor: zoom-out;
+}
+
+.heatmap-scope {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.risk-green { color: #4caf50; }
+.risk-yellow { color: #e6c229; }
+.risk-red { color: var(--hot-orange); }
+
 /* --- peritaje manual (checklist) --- */
 
 .checklist {

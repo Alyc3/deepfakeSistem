@@ -24,18 +24,22 @@ def crop_largest_face(pil_image: Image.Image, margin: float = 0.35):
 
     El modelo fue entrenado con rostros alineados que ocupan todo el encuadre;
     pasarle un fotograma completo (rostro pequeño + fondo) rompe esa
-    distribución y sesga el veredicto. Devuelve (imagen, rostro_encontrado):
-    si no se detecta ningún rostro se devuelve la imagen completa como último
-    recurso, dejando constancia en el log.
+    distribución y sesga el veredicto. Devuelve
+    (imagen, rostro_encontrado, bbox) con bbox = (x0, y0, x1, y1) en píxeles
+    del encuadre original — la caja permite reubicar los mapas de calor
+    explicativos sobre el fotograma completo. Si no se detecta ningún rostro
+    se devuelve la imagen completa como último recurso, con la bbox del
+    encuadre entero.
     """
     frame = np.array(pil_image)
     bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
     height, width = bgr.shape[:2]
+    full_bbox = (0, 0, width, height)
 
     _detector.setInputSize((width, height))
     _, faces = _detector.detect(bgr)
     if faces is None or len(faces) == 0:
-        return pil_image, False
+        return pil_image, False, full_bbox
 
     x, y, w, h = faces[int(np.argmax(faces[:, 2] * faces[:, 3]))][:4]
     mx, my = w * margin, h * margin
@@ -43,8 +47,8 @@ def crop_largest_face(pil_image: Image.Image, margin: float = 0.35):
     x1 = min(int(x + w + mx), width)
     y1 = min(int(y + h + my), height)
     if x1 <= x0 or y1 <= y0:
-        return pil_image, False
-    return pil_image.crop((x0, y0, x1, y1)), True
+        return pil_image, False, full_bbox
+    return pil_image.crop((x0, y0, x1, y1)), True, (x0, y0, x1, y1)
 
 
 def extract_frames(video_bytes: bytes, max_frames: int = 24):
