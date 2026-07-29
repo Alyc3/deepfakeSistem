@@ -21,6 +21,7 @@ import { renderHeatmap } from "../presenters/heatmap.presenter";
 import { showChecklist } from "../presenters/checklist.presenter";
 import { renderHistory } from "../presenters/history.presenter";
 import { setBackendOffline, setBackendOnline } from "./settings.controller";
+import { integrityLogLine, verifyBeforeAnalysis } from "./custody.controller";
 
 /** Escalonado de lectura del registro: los datos ya están calculados. */
 const STEP_MS = 220;
@@ -46,6 +47,18 @@ export async function analyze(): Promise<void> {
 
   const kb = (file.size / 1024).toFixed(0);
   addLog(`Material validado: ${file.name} (${file.kind}, ${kb} KB)`);
+
+  // Cadena de custodia: la huella se recalcula sobre el archivo que se va a
+  // enviar y se contrasta con la de la recepción. Advierte, no bloquea.
+  const integrity = await verifyBeforeAnalysis();
+  const line = integrityLogLine(integrity);
+  addLog(line.text, line.status);
+  if (integrity?.status === "mismatch") {
+    showToast(
+      "La huella no coincide con la registrada en la recepción: el material fue alterado. El análisis continúa.",
+    );
+  }
+
   addLog(`Enviado al backend ${state.settings.apiUrl}`);
   startPending(
     file.kind === "video"

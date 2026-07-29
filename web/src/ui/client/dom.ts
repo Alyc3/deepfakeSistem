@@ -58,6 +58,12 @@ export const el = {
   get preview() { return need<HTMLElement>("preview-container"); },
   get scanOverlay() { return need<HTMLElement>("scan-overlay"); },
   get analyze() { return need<HTMLButtonElement>("analyze"); },
+  get custody() { return need<HTMLElement>("custody"); },
+  get custodyState() { return need<HTMLElement>("custody-state"); },
+  get custodyDigest() { return need<HTMLElement>("custody-digest"); },
+  get custodyCopy() { return need<HTMLButtonElement>("custody-copy"); },
+  get custodyExpected() { return need<HTMLInputElement>("custody-expected"); },
+  get custodyNote() { return need<HTMLElement>("custody-note"); },
   get reset() { return need<HTMLButtonElement>("reset"); },
   get historySection() { return need<HTMLElement>("history-section"); },
   get historyList() { return need<HTMLUListElement>("history-list"); },
@@ -75,6 +81,7 @@ export const el = {
   get resultSuspects() { return need<HTMLElement>("result-suspects"); },
   get resultCaveat() { return need<HTMLElement>("result-caveat"); },
   get resultFrames() { return need<HTMLElement>("result-frames"); },
+  get resultIntegrity() { return need<HTMLElement>("result-integrity"); },
 
   // mapa de calor
   get heatmap() { return need<HTMLElement>("heatmap"); },

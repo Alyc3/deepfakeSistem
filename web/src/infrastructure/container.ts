@@ -18,18 +18,25 @@ import {
 import { clearCases, listCases, recordCase } from "@application/use-cases/manage-cases";
 import { readSettings, saveApiUrl } from "@application/use-cases/manage-settings";
 import { resolveIndications, scoreIndications } from "@application/use-cases/resolve-indications";
+import {
+  digestEvidence,
+  digestsAvailable,
+  verifyIntegrity,
+} from "@application/use-cases/verify-integrity";
 
 import { createHttpForensicsApi } from "./http/http-forensics-api";
 import { createLocalSettingsRepository } from "./storage/local-settings.repository";
 import { createLocalCaseRepository } from "./storage/local-case.repository";
 import { createLocalCredentialRepository } from "./storage/local-credential.repository";
 import { createWebCryptoHasher } from "./crypto/web-crypto-hasher";
+import { createWebCryptoDigest } from "./crypto/web-crypto-digest";
 
 export function createLab() {
   const settings = createLocalSettingsRepository();
   const cases = createLocalCaseRepository();
   const credentials = createLocalCredentialRepository();
   const hasher = createWebCryptoHasher();
+  const digests = createWebCryptoDigest();
 
   // La API relee la URL en cada llamada: si el perito la cambia en el panel
   // de configuración, la siguiente petición ya sale a la nueva.
@@ -41,6 +48,10 @@ export function createLab() {
     analyzeEvidence: analyzeEvidence(api),
     checkBackendStatus: checkBackendStatus(api),
     selectEvidence: selectEvidence(),
+
+    digestEvidence: digestEvidence(digests),
+    verifyIntegrity: verifyIntegrity(digests),
+    digestsAvailable: digestsAvailable(digests),
 
     sessionStatus: sessionStatus(auth),
     registerAnalyst: registerAnalyst(auth),
