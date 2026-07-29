@@ -43,6 +43,37 @@ import { ACCEPT_ATTRIBUTE } from "@domain/evidence";
     <div id="scan-overlay" class="scan-overlay" hidden></div>
   </div>
 
+  <!-- Cadena de custodia: la huella que se anotó al recibir la evidencia se
+       contrasta con la del archivo que se va a analizar. -->
+  <section id="custody" class="custody" hidden>
+    <div class="custody-head">
+      <h3 class="mono-label">Cadena de custodia — integridad del material</h3>
+      <span id="custody-state" class="custody-state mono-label" data-state="unverified"></span>
+    </div>
+
+    <div class="custody-row">
+      <span class="mono-label">Huella del material cargado</span>
+      <div class="custody-digest-row">
+        <code id="custody-digest" class="custody-digest">calculando…</code>
+        <button id="custody-copy" class="link-button" type="button">Copiar</button>
+      </div>
+    </div>
+
+    <label class="field custody-field">
+      <span class="mono-label">Huella registrada en la recepción</span>
+      <input
+        id="custody-expected"
+        class="text-input"
+        type="text"
+        spellcheck="false"
+        autocomplete="off"
+        placeholder="Pega aquí el hash anotado al recibir la evidencia"
+      />
+    </label>
+
+    <p id="custody-note" class="custody-note"></p>
+  </section>
+
   <div class="chamber-actions">
     <button id="analyze" class="primary-button primary-button--wide" type="button" disabled>
       Ejecutar análisis

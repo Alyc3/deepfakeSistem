@@ -656,6 +656,89 @@ button:focus-visible, input:focus-visible {
   background: #000;
 }
 
+/* --- cadena de custodia --- */
+
+.custody {
+  margin-top: 18px;
+  border: 1px solid var(--eerie-light);
+  border-radius: var(--radius);
+  background: var(--night);
+  padding: 16px;
+}
+
+.custody-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.custody-head h3 { margin: 0; }
+
+.custody-state { font-weight: 500; }
+.custody-state[data-state="match"] { color: var(--moss); }
+.custody-state[data-state="mismatch"] { color: var(--hot-orange); }
+.custody-state[data-state="unreadable"],
+.custody-state[data-state="unsupported"] { color: var(--orange-wheel); }
+
+.custody-row { margin-bottom: 14px; }
+.custody-row .mono-label { display: block; margin-bottom: 6px; }
+
+.custody-digest-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.custody-digest {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--smoky);
+  border: 1px solid var(--eerie-light);
+  border-radius: var(--radius);
+  padding: 7px 9px;
+  /* La huella se parte por dígitos: cabe entera en cualquier ancho. */
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.custody-field { margin-bottom: 10px; }
+.custody-field .text-input { font-size: 12px; }
+
+.custody-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+/* Cuando la huella no coincide, la nota entera se lee como advertencia. */
+.custody:has(.custody-state[data-state="mismatch"]) .custody-note {
+  color: var(--hot-orange);
+}
+.custody:has(.custody-state[data-state="mismatch"]) {
+  border-color: var(--hot-orange);
+}
+.custody:has(.custody-state[data-state="match"]) {
+  border-color: rgba(153, 165, 125, 0.5);
+}
+
+/* Advertencia de custodia dentro del dictamen. */
+.integrity-warning {
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--hot-orange);
+  border-left: 2px solid var(--hot-orange);
+  background: rgba(235, 70, 4, 0.07);
+  padding: 8px 10px;
+  text-align: left;
+}
+
 .chamber-actions {
   display: flex;
   flex-direction: column;

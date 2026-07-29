@@ -13,6 +13,7 @@ import { lab } from "../lab";
 import { showToast } from "../toast";
 import { clearLog } from "../analysis-log";
 import { clearAnalysisOutputs } from "../presenters/clear";
+import { clearCustody, registerEvidenceDigest, wireCustody } from "./custody.controller";
 
 const SAMPLES: Record<string, { url: string; name: string }> = {
   real: { url: "/assets/muestras/sample-real.jpg", name: "sample-real.jpg" },
@@ -67,6 +68,9 @@ export function setFile(file: EvidenceFile | null): void {
     file?.kind === "video" ? "Ejecutar análisis de video" : "Ejecutar análisis";
   el.reset.hidden = !file;
   renderPreview(file);
+  // La huella se calcula en cuanto entra el material: es lo primero que el
+  // perito necesita para el acta de recepción.
+  void registerEvidenceDigest();
 }
 
 function handleInspection(inspection: EvidenceInspection): void {
@@ -87,6 +91,7 @@ export function admitFile(file: File): void {
 export function resetAll(): void {
   clearAnalysisOutputs();
   clearLog();
+  clearCustody();
   setFile(null);
   el.fileInput.value = "";
 }
@@ -136,6 +141,7 @@ function wireDragAndDrop(): void {
 }
 
 export function wireEvidence(): void {
+  wireCustody();
   el.dropzone.addEventListener("click", openFilePicker);
 
   el.fileInput.addEventListener("change", () => {

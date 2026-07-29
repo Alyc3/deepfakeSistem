@@ -94,17 +94,19 @@ deepfakeSistem/
     │   │   ├── verdict.ts     # Dictámenes, nombres de peritos, leyenda ▸
     │   │   ├── analysis.ts    # Contrato de la respuesta del backend
     │   │   ├── evidence.ts    # Admisión del material (MIME, 10 MB)
+    │   │   ├── integrity.ts   # Cadena de custodia: huellas y su contraste
+    │   │   ├── risk.ts        # Bandas de la escala de riesgo del mapa
     │   │   ├── checklist.ts   # Peritaje manual y aritmética del desempate
     │   │   ├── analyst.ts     # Perito y credenciales
     │   │   ├── case-record.ts # Registro de casos
     │   │   └── settings.ts    # Configuración del laboratorio
     │   ├── application/       # CASOS DE USO Y PUERTOS
-    │   │   ├── ports/         # Contratos: API, ajustes, casos, credencial
-    │   │   └── use-cases/     # Analizar, acceder, registrar casos, ajustes
+    │   │   ├── ports/         # Contratos: API, ajustes, casos, credencial, huella
+    │   │   └── use-cases/     # Analizar, verificar integridad, acceder, casos
     │   ├── infrastructure/    # ADAPTADORES — lo reemplazable
     │   │   ├── http/          # API pericial sobre fetch
     │   │   ├── storage/       # localStorage / sessionStorage
-    │   │   ├── crypto/        # PBKDF2 con Web Crypto
+    │   │   ├── crypto/        # PBKDF2 (acceso) y SHA-256 (custodia)
     │   │   └── container.ts   # Raíz de composición (aquí se enchufa todo)
     │   ├── ui/                # ADAPTADOR DE ENTRADA — la interfaz
     │   │   ├── layouts/       # Envoltura del documento
@@ -256,13 +258,21 @@ guardada en el navegador: **no hay archivos `.env`**.
    análisis paso a paso y el dictamen. En pantallas estrechas las dos columnas
    se apilan en ese mismo orden. Arrastra un archivo, haz clic para abrir el
    selector del navegador, o usa las muestras de ejemplo.
-3. Pulsa **Ejecutar análisis**. Durante la inferencia, una línea de barrido
+3. Al incorporar el material se calcula su **huella SHA-256** y aparece el
+   panel de **cadena de custodia**. Pega en él la huella que anotaste al
+   recibir la evidencia: antes de cada análisis se recalcula sobre el archivo
+   que se va a enviar y se contrasta. Si coinciden, el material es bit a bit
+   el que se recibió; si no, el sistema **advierte pero no bloquea** — la
+   discrepancia queda escrita en el registro y en el propio dictamen, y el
+   perito decide. Sin huella de referencia el análisis sigue igual, con la
+   integridad marcada como no verificada.
+4. Pulsa **Ejecutar análisis**. Durante la inferencia, una línea de barrido
    recorre la vista previa y el registro muestra el progreso; al terminar,
    despliega cada etapa con sus datos reales — fotogramas, rostros, la señal
    de cada detector, los momentos sospechosos — y cierra con el dictamen.
-4. El dictamen aparece como sello — **MANIPULADO** en naranja, **REAL** en
+5. El dictamen aparece como sello — **MANIPULADO** en naranja, **REAL** en
    moss o **INDICIOS** en ámbar — con su confianza y el desglose por modelo.
-5. Bajo el dictamen aparece el **mapa de calor explicativo** (EigenCAM
+6. Bajo el dictamen aparece el **mapa de calor explicativo** (EigenCAM
    fusionado de todos los peritos): las zonas coloreadas son las regiones que
    sustentaron el veredicto, con la leyenda de ponderación por detector. El
    color va por intensidad en escala de riesgo — verde bajo, amarillo medio,
@@ -272,7 +282,7 @@ guardada en el navegador: **no hay archivos `.env`**.
    coloreada por riesgo, y el destacado (▸) es el de mayor señal. Clic en
    una miniatura —o `←` / `→`— para recorrerlos; clic en la imagen grande
    para ampliarla.
-6. Si el dictamen queda en **INDICIOS**, se abre el **peritaje manual**: un
+7. Si el dictamen queda en **INDICIOS**, se abre el **peritaje manual**: un
    checklist de seis observaciones (bordes del rostro, naturalidad de gestos,
    coherencia de iluminación, filtros, momentos sospechosos, origen del
    material) que respondes mirando la evidencia a la izquierda. Al emitir, el
@@ -643,6 +653,36 @@ bastante; la comprobación de salud usa 5 segundos.
 La misma función valida venga el archivo del selector, del arrastre o de las
 muestras de demostración: hay un solo punto de entrada (`admitFile`).
 
+### Cadena de custodia: la huella del material
+
+Una evidencia sirve si se puede demostrar que es la misma que se recibió. Al
+incorporar el material se calcula su **huella SHA-256** en el propio navegador
+(`crypto.subtle.digest` sobre los bytes del archivo) y se muestra para que el
+perito la anote en el acta. En el campo *huella registrada en la recepción* se
+pega la del acta y, **antes de cada análisis, la huella se vuelve a calcular
+sobre el archivo que se va a enviar** y se contrastan.
+
+El resultado nunca detiene el análisis. Un perito puede querer examinar
+material alterado precisamente porque está alterado; lo que el sistema debe
+hacer es advertirlo y dejar constancia:
+
+| Resultado | Qué hace el sistema |
+|---|---|
+| Coinciden | «COINCIDE» en moss y línea de verificación en el registro |
+| No coinciden | «NO COINCIDE» en naranja, aviso emergente, línea de advertencia en el registro y **advertencia dentro del propio dictamen** — el análisis continúa |
+| Sin huella de referencia | Se registra la huella calculada y se marca la integridad como no verificada |
+| Huella ilegible o MD5 | Se dice por qué no se pudo comparar (MD5 no lo implementa Web Crypto) |
+
+El algoritmo se deduce de la longitud de la huella declarada —40 dígitos es
+SHA-1, 64 SHA-256, 96 SHA-384, 128 SHA-512—, así que sirve el acta que traiga
+el caso sin configurar nada. La comparación normaliza mayúsculas, espacios y
+prefijos del estilo `sha256:`, porque así es como aparecen en las actas
+reales.
+
+Igual que el acceso del perito, esto necesita **contexto seguro** (`localhost`
+o HTTPS): si no lo hay, se dice con claridad en lugar de fingir una
+comprobación que no se hizo.
+
 ### La vista previa
 
 En el navegador los bytes ya están en el objeto `File` que entrega el usuario,
@@ -882,7 +922,9 @@ aplicación web muestra ese mensaje tal cual en el registro del análisis.
 | `FileNotFoundError: models/Detector_De_Sintesis_GAN.pth` | Lanzaste `uvicorn` desde otro directorio. Hazlo desde `backend/`. |
 | `Form data requires "python-multipart"` | Falta esa dependencia: `pip install -r requirements.txt`. |
 | La barra de estado dice «Backend fuera de línea» | El backend no está arrancado, o la URL configurada no coincide. Verifica con `curl http://127.0.0.1:8000/` y revísala en `Ctrl/Cmd+,`. |
-| El acceso dice que el navegador no ofrece criptografía segura | Estás sirviendo el laboratorio por `http://` contra una IP. Web Crypto solo existe en contextos seguros: usa `localhost` o publica por HTTPS. |
+| El acceso —o la verificación de integridad— dice que el navegador no ofrece criptografía segura | Estás sirviendo el laboratorio por `http://` contra una IP. Web Crypto solo existe en contextos seguros: usa `localhost` o publica por HTTPS. |
+| La huella no coincide y el material parece el mismo | Comprueba que el acta registre la huella del **archivo original** y no la de una copia recomprimida (WhatsApp, exportaciones de edición y algunas descargas re-codifican el video y cambian todos sus bits). El aviso es correcto: ese archivo no es el que se recibió. |
+| El panel de custodia no aparece | Solo se muestra con material cargado. Si aparece pero la huella dice «no disponible», es el contexto inseguro de la fila anterior. |
 | «Failed to fetch» al analizar, con el backend en marcha | El navegador bloqueó la petición por CORS o por contenido mixto (página HTTPS llamando a un backend HTTP). Revisa `allow_origins` en `backend/app/main.py` y sirve ambos por el mismo esquema. |
 | Un video se analiza como si fuera imagen | La extensión no está en la tabla de MIME de `web/src/domain/evidence.ts`. Añádela allí. |
 | Todo video da el mismo veredicto | Revisa el log del backend: `faces_detected` por fotograma y los `p_fake` individuales dicen si el detector encuentra el rostro y cómo puntúa cada fotograma. Si `rostro=no` en todos, el material no tiene caras detectables de frente. |

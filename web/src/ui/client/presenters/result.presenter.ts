@@ -4,9 +4,28 @@
 import type { AnalysisResult } from "@domain/analysis";
 import { lacksFace } from "@domain/analysis";
 import { signalLegend, verdictOf, type Prediction } from "@domain/verdict";
+import { shortDigest } from "@domain/integrity";
 import { el } from "../dom";
 import { state } from "../state";
 import { showToast } from "../toast";
+
+/**
+ * Una ruptura de la cadena de custodia tiene que quedar escrita en el propio
+ * dictamen, no solo en la bitácora: es lo que el perito lee y adjunta.
+ */
+function renderIntegrityWarning(): void {
+  const check = state.integrity;
+  if (check?.status !== "mismatch") {
+    el.resultIntegrity.hidden = true;
+    return;
+  }
+  el.resultIntegrity.textContent =
+    `⚠ CADENA DE CUSTODIA — la huella ${check.algorithm} del material analizado ` +
+    `(${shortDigest(check.computed ?? "")}) no coincide con la registrada en la ` +
+    `recepción (${shortDigest(check.declared ?? "")}): el material fue alterado ` +
+    `tras su recepción. El dictamen se emite sobre ese material alterado.`;
+  el.resultIntegrity.hidden = false;
+}
 
 export function renderResult(result: AnalysisResult): void {
   // El backend responde "Real", "Fake" o "Suspect" (backend/app/model.py).
@@ -54,6 +73,8 @@ export function renderResult(result: AnalysisResult): void {
     el.resultFrames.hidden = true;
   }
 
+  renderIntegrityWarning();
+
   // Sin rostro detectable el dictamen pierde base metodológica: avisar.
   if (lacksFace(result)) {
     showToast("No se detectó ningún rostro en el material; el dictamen pierde fiabilidad.");
@@ -81,5 +102,6 @@ export function stampFinalVerdict(
 export function clearDictamen(): void {
   el.result.hidden = true;
   el.resultFrames.hidden = true;
+  el.resultIntegrity.hidden = true;
   el.resultBar.style.width = "0%";
 }

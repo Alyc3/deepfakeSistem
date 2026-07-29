@@ -88,6 +88,13 @@ su marca de tiempo en segundos. Si OpenCV no puede decodificar el códec, el
 análisis se detiene con un error explícito (HTTP 422) — nunca se emite
 veredicto sobre material ilegible.
 
+> **Cadena de custodia.** Antes de que el material llegue hasta aquí, la
+> aplicación web calcula su huella SHA-256 y la contrasta con la que el perito
+> anotó al recibir la evidencia (ver el README raíz). La comprobación es del
+> cliente y **no bloquea el análisis**: una discrepancia se advierte y queda
+> escrita en el dictamen, pero el procedimiento de determinación que sigue es
+> exactamente el mismo. El backend no participa en esa verificación.
+
 ### Paso 2 — Recorte Facial
 
 El **Detector Facial YuNet** localiza el rostro más grande de cada fotograma
