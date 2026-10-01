@@ -1,0 +1,13 @@
+{
+  "name": "deepfake-sistem-root",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CertiFace - Sistema integral de detección forense de deepfakes",
+  "scripts": {
+    "dev": "npm --prefix web run dev",
+    "start": "npm --prefix web run start",
+    "build": "npm --prefix web run build",
+    "preview": "npm --prefix web run preview",
+    "check": "npm --prefix web run check"
+  }
+}

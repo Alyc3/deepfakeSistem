@@ -9,3 +9,8 @@ python-multipart
 timm
 transformers
 peft
+httpx
+sqlalchemy
+asyncpg
+psycopg2-binary
+pyjwt

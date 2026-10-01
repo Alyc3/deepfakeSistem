@@ -1,0 +1,413 @@
+# CertiFace — Documento de Arquitectura de Software y Guía de Evolución Forense
+
+Este documento recoge el análisis técnico detallado del sistema **CertiFace**, su estado arquitectónico actual (**AS-IS**), la arquitectura objetivo propuesta (**TO-BE**), los diagramas en formato C4 y de secuencia actualizados con los servicios integrados reales, el diseño de persistencia y procesamiento asíncrono, la cadena de custodia según **ISO/IEC 27037**, y la estrategia técnica para elevar la precisión de los mapas de calor explicativos (XAI).
+
+---
+
+## 1. Introducción y Visión General
+
+**CertiFace** es una plataforma de peritaje informático orientada a la detección forense de suplantación de identidad en medios digitales (imágenes y videos), cubriendo manipulaciones como *face swap*, síntesis por difusión y redes generativas antagónicas (GAN).
+
+El sistema opera bajo principios forenses estrictos: el dictamen del sistema debe ser **explicable**, **trazable**, **inmutable** y **jurídicamente defendible**, asistiendo al perito humano mediante métricas cuantitativas por familia de manipulación, marcas de tiempo exactas, láminas demostrativas con mapas de atención y preservación estricta de la cadena de custodia digital.
+
+---
+
+## 2. Análisis de la Arquitectura Actual (AS-IS)
+
+Actualmente, el sistema está estructurado como dos subsistemas desacoplados comunicados mediante HTTP:
+
+```
+┌──────────────────────────────────────┐            ┌──────────────────────────────────────┐
+│        Frontend Web (Astro)          │   HTTP     │           Backend (FastAPI)          │
+│        Navegador del Perito          │───────────►│            Pipeline ML / XAI         │
+│  [Arquitectura Hexagonal en TS puro] │◄───────────│   [3 Peritos Faciales + 1 Sonda]     │
+└──────────────────────────────────────┘  JSON/B64  └──────────────────────────────────────┘
+```
+
+### 2.1. Frontend (`web/`): Arquitectura Hexagonal (Ports & Adapters)
+
+El frontend está implementado con **Astro 7** y **TypeScript**, operando como un laboratorio interactivo en el navegador bajo Clean Architecture:
+- **Dominio (`src/domain/`):** Modelos de dictamen (`verdict.ts`), admisión de evidencia (`evidence.ts`), cálculo de hashes para cadena de custodia (`integrity.ts`) y bandas de riesgo (`risk.ts`).
+- **Aplicación (`src/application/`):** Casos de uso (`analyze-evidence.ts`, `manage-cases.ts`) y puertos (`forensics-api.port.ts`, `case-repository.port.ts`).
+- **Infraestructura (`src/infrastructure/`):** Adaptador HTTP (`fetch`), almacenamiento local (`localStorage`) y derivación de credenciales locales con PBKDF2.
+- **Capa UI (`src/ui/`):** Vistas `.astro` y controladores reactivos TypeScript en cliente.
+
+### 2.2. Backend (`backend/`): Servicio de Inferencia Monolítico Síncrono
+
+El backend (`FastAPI` + `PyTorch`) opera como un motor de inferencia multimodelo:
+1. **Preprocesamiento Facial (`preprocessing.py`):** Detección YuNet (ONNX) con margen del 35% y extracción de hasta 24 fotogramas con OpenCV.
+2. **Pipeline Mixture of Experts (MoE) (`model.py`):**
+   - **Perito 1 (Síntesis GAN):** EfficientNet-B0 (clasificador binario entrenado sobre StyleGAN).
+   - **Perito 2 (Face Swap):** EfficientNet-B7 noisy-student (DFDC).
+   - **Perito 3 (Difusión Facial):** SigLIP2 Vision Transformer base 512px.
+   - **Sonda de Escena Generada (`scene_model.py`):** SigLIP2-SO400M + DINOv2-L para encuadre completo.
+3. **Explicabilidad (`explain.py`):** EigenCAM (SVD sobre activaciones de última capa sin gradientes) + desenfoque gaussiano.
+
+---
+
+## 3. Arquitectura Objetivo (TO-BE)
+
+### 3.1. Matriz de Cambios y Servicios Integrados
+
+| Componente | Limitación Actual (AS-IS) | Solución Arquitectónica (TO-BE) |
+|---|---|---|
+| **Inferencia** | Síncrona en `POST /predict` (bloqueo del event loop; timeouts en videos largos). | Desacoplamiento asíncrono con **Celery** + **Redis** (HTTP 202 Accepted + Polling / SSE). |
+| **Persistencia** | En memoria / efímera; los casos se pierden. | **PostgreSQL 16 en la Nube (Neon DB)** con pooler SSL para expedientes, reportes y trazabilidad. |
+| **Ingesta de Evidencia** | Archivo temporal eliminado tras inferencia; riesgo de contaminación probatoria. | **Cadena de Custodia ISO/IEC 27037:** Evidencia Original inmutable (Read-Only) y **Copia Forense de Trabajo**. |
+| **Autenticación y Auditoría** | Local con PBKDF2 en navegador; sin auditoría central. | **Microservicio Externo de Auth & Audit (`auth-service-w3lo.onrender.com`)**: JWT Bearer + `POST /api/internal/audit` con `X-Internal-Api-Key`. |
+| **Clasificación Forense** | Binaria simple ('Fake' vs 'Real') con reservas. | **Taxonomía Tripartita Rigurosa:** `MANIPULADO`, `SIN_MANIPULACION` y `ANTECEDENTES`. |
+| **Marcas de Tiempo** | Segundos sueltos aislados. | **Detección Temporal Continua:** Intervalos exactos (`timecode_start` - `timecode_end`), fotogramas y pico de score. |
+| **Explicabilidad (XAI)** | EigenCAM agnóstico a clase con baja resolución. | **Grad-CAM++ / HiResCAM** + **Attention Rollout** + **Filtro Guiado por Bordes** + Hoja de ruta de entrenamiento con máscaras. |
+| **Dictamen Pericial** | Datos crudos en JSON. | **Dictamen Pericial en PDF (WeasyPrint / ReportLab):** Certificado judicial con datos del perito, láminas demostrativas y firma digital. |
+
+---
+
+### 3.2. Diagrama C4 — Nivel 1: Contexto del Sistema
+
+```mermaid
+C4Context
+    title CertiFace - Nivel 1: Contexto del Sistema
+
+    Person(perito, "Perito Forense / Analista", "Carga evidencias digitales, audita marcas temporales y emite dictámenes periciales judiciales.")
+
+    Enterprise_Boundary(b0, "Frontera CertiFace") {
+        System(certiface, "Plataforma CertiFace", "Sistema pericial de detección de deepfakes, preservación de cadena de custodia, análisis temporal y generación de dictámenes.")
+    }
+
+    System_Ext(auth_service, "Microservicio Auth & Audit (Render)", "Servicio centralizado del ecosistema: autenticación JWT (/api/auth), perfiles periciales (/api/auth/me) y auditoría (/api/internal/audit).")
+    System_Ext(neon_db, "Base de Datos Neon (PostgreSQL 16)", "Instancia relacional en la nube (AWS sa-east-1) con pooler y SSL para expedientes, evidencias y auditoría.")
+    System_Ext(storage_sys, "Almacén Seguro de Evidencias", "Almacenamiento de Evidencia Original (Read-Only), Copias de Trabajo, Láminas y Dictámenes PDF.")
+
+    Rel(perito, certiface, "Gestiona expedientes, solicita análisis y refrenda dictámenes", "HTTPS")
+    Rel(perito, auth_service, "Inicia sesión y obtiene credenciales JWT", "HTTPS / JSON")
+    Rel(certiface, auth_service, "Valida sesión de perito y registra logs de auditoría central", "HTTPS (Bearer / X-Internal-Api-Key)")
+    Rel(certiface, neon_db, "Persiste expedientes, marcas de tiempo y cadena de custodia", "PostgreSQL Wire Protocol + SSL")
+    Rel(certiface, storage_sys, "Preserva evidencia original inmutable y guarda láminas demostrativas", "File System / S3 API")
+```
+
+---
+
+### 3.3. Diagrama C4 — Nivel 2: Contenedores
+
+```mermaid
+C4Container
+    title CertiFace - Nivel 2: Contenedores
+
+    Person(perito, "Perito Forense", "Usuario acreditado")
+
+    Container(spa, "Single Page Application (SPA)", "Astro 7 / TypeScript", "Laboratorio pericial interactivo, visor de timecodes, editor de conclusiones y visualizador de mapas térmicos.")
+    Container(api, "API Gateway / Core Backend", "FastAPI (Python)", "Control de acceso, orquestador de ingesta forense, despacho asíncrono y generación de dictámenes PDF.")
+    ContainerDb(redis, "Message Broker & Cache", "Redis", "Cola de tareas Celery y caché de sesiones / perfiles periciales.")
+    Container(worker, "Workers de Inferencia", "Celery + PyTorch (CUDA)", "Extracción de frames, inferencia MoE (B0, B7, SigLIP2, DINOv2), cálculo de CAMs y detección de intervalos.")
+    ContainerDb(neon, "Base de Datos Neon", "PostgreSQL 16 (sa-east-1)", "Expedientes, evidencias, logs de custodia, clasificaciones y marcas temporales.")
+    ContainerDb(storage, "Almacén de Evidencias", "Directorio Seguro / Object Storage", "Master Evidences (chmod 400), Working Copies, Láminas demostrativas y PDFs.")
+
+    System_Ext(auth_service, "Servicio Auth & Audit (Render)", "https://auth-service-w3lo.onrender.com")
+
+    Rel(perito, spa, "Usa la aplicación", "HTTPS")
+    Rel(spa, auth_service, "POST /api/auth/login", "HTTPS / JSON")
+    Rel(spa, api, "Llamadas a la API REST (Bearer JWT)", "HTTPS / JSON")
+    Rel(api, auth_service, "GET /api/auth/me (validar sesión y obtener matrícula)", "HTTPS")
+    Rel(api, auth_service, "POST /api/internal/audit (X-Internal-Api-Key)", "HTTPS")
+    Rel(api, storage, "Guarda Evidencia Original (Master) y genera Copia de Trabajo", "I/O Criptográfico")
+    Rel(api, neon, "Registra caso y custodia inicial", "SQLAlchemy + asyncpg")
+    Rel(api, redis, "Encola tarea process_forensic_video(case_id)", "Redis Protocol")
+    Rel(worker, redis, "Consume tareas y publica progreso", "Celery Protocol")
+    Rel(worker, storage, "Lee Copia de Trabajo, guarda láminas y dictamen PDF", "I/O")
+    Rel(worker, neon, "Actualiza veredicto, marcas de tiempo exactas y JSONB", "SQLAlchemy")
+    Rel(spa, api, "Polling de estado y descarga de dictamen", "HTTPS")
+```
+
+---
+
+### 3.4. Diagrama de Secuencia: Ingesta Forense, Auditoría e Inferencia
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Perito as Perito Forense
+    participant SPA as Web (Astro)
+    participant Auth as Auth & Audit Service (Render)
+    participant Core as FastAPI Backend
+    participant Storage as Almacén de Evidencias
+    participant Redis as Redis / Celery
+    participant Worker as Worker Inferencia
+    participant Neon as Neon PostgreSQL
+
+    %% 1. Autenticación
+    Perito->>SPA: Ingresa credenciales (email + contraseña)
+    SPA->>Auth: POST /api/auth/login
+    Auth-->>SPA: { access_token, token_type: "bearer" }
+    SPA->>Auth: GET /api/auth/me (Bearer Token)
+    Auth-->>SPA: Datos del Perito (Nombre, Matrícula, Rol)
+    
+    %% 2. Ingesta y Cadena de Custodia ISO/IEC 27037
+    Perito->>SPA: Carga video.mp4 para peritaje
+    SPA->>SPA: Calcula hash SHA-256 preliminar
+    SPA->>Core: POST /api/v1/cases/analyze (Video + Metadatos + Token)
+    
+    Core->>Auth: GET /api/auth/me (Verifica token y extrae datos perito)
+    Auth-->>Core: 200 OK (Identidad verificada)
+    
+    Core->>Storage: Guarda Evidencia Original (Read-Only) -> SHA-256 Original
+    Core->>Storage: Genera Copia Forense de Trabajo -> SHA-256 Copia
+    Core->>Core: Valida que SHA256_Orig == SHA256_Copia
+    
+    Core->>Neon: INSERT INTO forensic_cases, evidences, custody_audit_log
+    
+    %% 3. Auditoría Centralizada Remota
+    Core->>Auth: POST /api/internal/audit (X-Internal-Api-Key)
+    Note over Core,Auth: { user_id, action: "CASE_INGESTION_AND_ANALYSIS_STARTED", endpoint, ip }
+    
+    %% 4. Despacho Asíncrono
+    Core->>Redis: Encola 'tasks.process_video(case_id)'
+    Core-->>SPA: HTTP 202 Accepted { case_id, status: 'QUEUED' }
+
+    %% 5. Inferencia en Worker
+    Worker->>Redis: Consume tarea
+    Worker->>Neon: UPDATE analysis_reports SET status='PROCESSING'
+    Worker->>Storage: Abre Copia Forense de Trabajo
+    Worker->>Worker: Extrae fotogramas con OpenCV + Detección YuNet
+    Worker->>Worker: Inferencia MoE (GAN, FaceSwap, Difusión, Escena)
+    Worker->>Worker: Detecta marcas de tiempo exactas (timecodes)
+    Worker->>Worker: Genera mapas de calor de alta resolución (Grad-CAM++ / Guided Filter)
+    Worker->>Storage: Guarda láminas demostrativas (fotograma + heatmap)
+    Worker->>Worker: Evalúa taxonomía (MANIPULADO / SIN_MANIPULACION / ANTECEDENTES)
+    
+    Worker->>Neon: UPDATE analysis_reports (verdict, confidence, scores)
+    Worker->>Neon: INSERT INTO timecode_inconsistencies (intervalos exactos)
+    Worker->>Neon: INSERT INTO custody_audit_log (action='INFERENCE_COMPLETED')
+    Worker->>Auth: POST /api/internal/audit (action: "INFERENCE_COMPLETED")
+
+    %% 6. Finalización y Dictamen
+    SPA->>Core: GET /api/v1/cases/{case_id}/status -> COMPLETED
+    SPA-->>Perito: Muestra resultados, marcas de tiempo y visor de láminas
+    Perito->>SPA: Redacta y confirma conclusiones periciales
+    SPA->>Core: POST /api/v1/cases/{case_id}/finalize-report (Conclusiones)
+    Core->>Core: Genera Dictamen Pericial PDF (WeasyPrint) + Hash SHA-256 del PDF
+    Core->>Storage: Guarda dictamen oficial
+    Core->>Neon: UPDATE analysis_reports SET pdf_report_uri, pdf_sha256
+    Core-->>SPA: Dictamen Pericial PDF listo para descarga probatoria
+```
+
+---
+
+## 4. Persistencia en Base de Datos (Neon PostgreSQL 16)
+
+La conexión a la base de datos se realiza sobre Neon DB (AWS `sa-east-1`) con el pooler habilitado y forzado de SSL (`sslmode=require&channel_binding=require`).
+
+### Esquema DDL Forense Completo
+
+```sql
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- 1. Peritos y Usuarios (Sincronizado con el Microservicio de Auth)
+CREATE TABLE peritos (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    external_auth_id VARCHAR(255) UNIQUE NOT NULL, -- ID del auth-service
+    email VARCHAR(255) NOT NULL,
+    first_name VARCHAR(150) NOT NULL,
+    last_name VARCHAR(150) NOT NULL,
+    identifier VARCHAR(100) NOT NULL,              -- Cédula / Matrícula pericial
+    role_name VARCHAR(50) NOT NULL,
+    phone_number VARCHAR(50),
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_synced_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 2. Expedientes Forenses
+CREATE TABLE forensic_cases (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    case_number VARCHAR(100) UNIQUE NOT NULL,       -- Identificador judicial (ej: EXP-2026-DF-001)
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    perito_id UUID NOT NULL REFERENCES peritos(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 3. Evidencias Digitales (Preservación estricta ISO/IEC 27037)
+CREATE TABLE evidences (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    case_id UUID NOT NULL REFERENCES forensic_cases(id) ON DELETE CASCADE,
+    file_name VARCHAR(255) NOT NULL,
+    file_size_bytes BIGINT NOT NULL,
+    mime_type VARCHAR(100) NOT NULL,
+    sha256_original CHAR(64) NOT NULL,              -- Huella digital inmutable de la evidencia original
+    sha256_working_copy CHAR(64) NOT NULL,         -- Huella digital verificada de la copia de trabajo
+    original_storage_uri TEXT NOT NULL,            -- Ubicación protegida contra escritura
+    working_storage_uri TEXT NOT NULL,             -- Ubicación de la copia evaluada por el pipeline
+    duration_seconds NUMERIC(8, 3),
+    fps NUMERIC(6, 2),
+    total_frames INT,
+    width INT,
+    height INT,
+    uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 4. Registro Integral de Auditoría y Cadena de Custodia
+CREATE TABLE custody_audit_log (
+    id BIGSERIAL PRIMARY KEY,
+    evidence_id UUID REFERENCES evidences(id) ON DELETE CASCADE,
+    perito_id UUID REFERENCES peritos(id),
+    action VARCHAR(100) NOT NULL,                   -- INGESTION, WORKING_COPY_VERIFIED, ACCESSED, ANALYZED, REPORT_GENERATED, DOWNLOADED
+    ip_address VARCHAR(45) NOT NULL,
+    user_agent TEXT,
+    hash_verified BOOLEAN NOT NULL DEFAULT TRUE,
+    synced_to_central_audit BOOLEAN DEFAULT FALSE,  -- Estado de replicación hacia POST /api/internal/audit
+    details JSONB DEFAULT '{}'::jsonb,              -- Metadatos adicionales de la acción
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 5. Dictámenes Periciales y Resultados de Inferencia
+CREATE TABLE analysis_reports (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    evidence_id UUID NOT NULL REFERENCES evidences(id) ON DELETE CASCADE,
+    perito_id UUID NOT NULL REFERENCES peritos(id),
+    status VARCHAR(30) NOT NULL DEFAULT 'QUEUED',   -- QUEUED, PROCESSING, COMPLETED, FAILED
+    
+    -- Clasificación Tripartita Estricta
+    verdict VARCHAR(30) CHECK (verdict IN ('MANIPULADO', 'SIN_MANIPULACION', 'ANTECEDENTES', NULL)),
+    confidence_score NUMERIC(5, 2),                 -- 0.00 a 100.00
+    caveat_notes TEXT,                              -- Observaciones o reservas técnicas
+    
+    -- Métricas de Ejecución
+    processing_time_seconds NUMERIC(8, 2),
+    hardware_info VARCHAR(255),
+    frames_analyzed INT,
+    faces_detected INT,
+    
+    -- Scores Estructurados por Modelo
+    models_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    
+    expert_conclusions TEXT,                        -- Conclusiones obligatorias redactadas por el perito
+    pdf_report_uri TEXT,                            -- Ruta de almacenamiento del PDF final
+    pdf_sha256 CHAR(64),                            -- Hash de integridad del dictamen emitido
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+
+-- 6. Detección Temporal de Inconsistencias (Marcas de Tiempo Exactas)
+CREATE TABLE timecode_inconsistencies (
+    id BIGSERIAL PRIMARY KEY,
+    report_id UUID NOT NULL REFERENCES analysis_reports(id) ON DELETE CASCADE,
+    timecode_start VARCHAR(12) NOT NULL,            -- Formato exacto: "00:01:23.450"
+    timecode_end VARCHAR(12) NOT NULL,              -- Formato exacto: "00:01:25.100"
+    duration_seconds NUMERIC(6, 3) NOT NULL,
+    frame_start INT NOT NULL,
+    frame_end INT NOT NULL,
+    peak_timecode VARCHAR(12) NOT NULL,
+    peak_frame INT NOT NULL,
+    peak_anomaly_score NUMERIC(5, 4) NOT NULL,
+    anomaly_family VARCHAR(50) NOT NULL,            -- "FACE_SWAP", "DIFFUSION", "GAN"
+    demonstrative_plate_uri TEXT                    -- Imagen de la lámina demostrativa para el dictamen
+);
+
+CREATE INDEX idx_evidences_sha256 ON evidences(sha256_original);
+CREATE INDEX idx_custody_evidence ON custody_audit_log(evidence_id);
+CREATE INDEX idx_custody_perito ON custody_audit_log(perito_id);
+CREATE INDEX idx_reports_verdict ON analysis_reports(verdict);
+CREATE INDEX idx_inconsistencies_report ON timecode_inconsistencies(report_id);
+```
+
+---
+
+## 5. Integración con el Servicio de Autenticación y Auditoría Externa
+
+El sistema se conecta al servicio desplegado en `https://auth-service-w3lo.onrender.com`:
+
+1. **Flujo de Acceso del Perito:**
+   - La SPA invoca `POST /api/auth/login` con las credenciales del perito.
+   - Con el token recibido, consulta `GET /api/auth/me` para obtener el perfil (`first_name`, `last_name`, `identifier` correspondiente a la matrícula/cédula profesional, `role`).
+   - El token se adjunta en cada petición al Core de CertiFace: `Authorization: Bearer <access_token>`.
+2. **Validación en Backend:**
+   - FastAPI implementa una dependencia `get_current_perito` que valida el token contra el servicio (con caché en memoria/Redis) y asegura la sincronización del registro en la tabla local `peritos`.
+3. **Auditoría Centralizada (`POST /api/internal/audit`):**
+   - Cada evento forense (acceso al video, ejecución de análisis, generación de dictamen, descarga) despacha de forma asíncrona un payload al servicio central con la cabecera `X-Internal-Api-Key`:
+   ```json
+   {
+     "user_id": "uuid-del-perito",
+     "action": "EVIDENCE_ACCESSED_AND_ANALYZED",
+     "endpoint": "/api/v1/cases/analyze",
+     "ip_address": "192.168.1.50"
+   }
+   ```
+
+---
+
+## 6. Clasificación Tripartita y Detección Temporal de Inconsistencias
+
+### 6.1. Taxonomía de Decisión Forense
+
+```
+                             Scores de Inferencia MoE
+                                        │
+        ┌───────────────────────────────┼───────────────────────────────┐
+        ▼                               ▼                               ▼
+ [ FaceSwap p > 0.60             [ Todos los peritos             [ Zona gris: difusión 0.3-0.7
+   en ≥ 2 fotogramas,              en ruido base (p < 0.25)        con entorno limpio (filtro);
+   o GAN/Difusión > 0.50           y entorno limpio ]              degradación de compresión;
+   con contexto corroborado ]                                      o faces_detected = 0 ]
+        │                               │                               │
+        ▼                               ▼                               ▼
+   MANIPULADO                   SIN MANIPULACIÓN                   ANTECEDENTES
+```
+
+### 6.2. Marcas de Tiempo Exactas (Intervalos Continuos)
+El análisis recorre los fotogramas muestreados y agrupa los picos que exceden el umbral forense (`p > 0.60`). Para cada grupo contiguo calcula:
+- `timecode_start`: Primer fotograma anómalo convertido a formato `hh:mm:ss.mmm`.
+- `timecode_end`: Último fotograma de la secuencia anómala.
+- `peak_frame` y `peak_timecode`: Momento de máxima divergencia matemática, el cual se selecciona automáticamente para ilustrar la **Lámina Demostrativa** del dictamen.
+
+---
+
+## 7. Optimización y Precisión de Mapas de Calor (XAI)
+
+Para que el mapa de calor constituya prueba pericial admisible, debe delimitar con exactitud el origen del artefacto en vez de proyectar una mancha gaussiana sobre el rostro.
+
+### 7.1. Optimización Algorítmica Inmediata (Inferencia)
+1. **Grad-CAM++ / HiResCAM:** Reemplazo de EigenCAM en los modelos convolucionales (B0 y B7). Pondera las activaciones por los gradientes positivos de segundo orden de la clase `Fake`.
+2. **Attention Rollout:** Para el Vision Transformer SigLIP2, multiplica recursivamente las matrices de atención de las capas profundas hasta la entrada, preservando la localización de los parches.
+3. **Filtro Guiado por Bordes (`Guided Filter`):** Sustitución del desenfoque gaussiano por `cv2.ximgproc.guidedFilter` usando la luminancia del fotograma original como guía. El mapa resultante se alinea matemáticamente con la anatomía (mandíbula, párpados, labios) sin sangrar hacia el fondo.
+
+### 7.2. Hoja de Ruta de Entrenamiento con Máscaras de Falsificación
+Para lograr mapas a nivel de píxel sin depender de CAM:
+1. **Datos de Entrenamiento:** Utilizar **FaceForensics++** (c23/c40) y **Celeb-DF-v2**, que incluyen máscaras binarias reales de la región manipulada (*ground truth masks*).
+2. **Arquitectura:** Modelo multirama con *Feature Pyramid Network* (FPN) o *SegFormer*:
+   - Rama 1: Clasificación de autenticidad global.
+   - Rama 2: Segmentación semántica de píxeles falsificados.
+3. **Pérdida Compuesta:**
+   $$\mathcal{L} = \mathcal{L}_{\text{BCE}}(\text{clase}) + \lambda_1 \mathcal{L}_{\text{Focal}}(\text{máscara}) + \lambda_2 \mathcal{L}_{\text{Dice}}(\text{máscara})$$
+
+---
+
+## 8. Generación del Dictamen Pericial Defendible en PDF
+
+El dictamen judicial se genera mediante **WeasyPrint** garantizando formato estándar **PDF/A-1b** y consta de 8 apartados indispensables:
+
+1. **Encabezado y Acreditación del Perito:** Nombres, apellidos, número de identificación / colegiatura (extraídos de `GET /api/auth/me`), juzgado/expediente de destino.
+2. **Cadena de Custodia:** Nombre del archivo original, tamaño, hash SHA-256 original y hash SHA-256 de la copia forense de trabajo.
+3. **Metodología y Entorno:** Versión del software, modelos MoE empleados con los hashes criptográficos de sus pesos, hardware utilizado y tiempo de procesamiento.
+4. **Veredicto y Resultados Cuantitativos:** Clasificación categórica (`MANIPULADO`, `SIN MANIPULACION` o `ANTECEDENTES`), nivel de confianza porcentual y desglose por modelo.
+5. **Cronología de Inconsistencias:** Tabla detallada de intervalos temporales exactos (`hh:mm:ss.mmm`), duración y severidad.
+6. **Láminas Demostrativas:** Composición visual para cada intervalo detectado:
+   - Panel A: Fotograma original en el segundo pico.
+   - Panel B: Mapa térmico forense de atención superpuesto.
+   - Panel C: Ampliación de la zona de inconsistencia (borde de mezcla / artefacto).
+7. **Conclusiones del Perito:** Redactadas o validadas por el perito antes de la emisión final.
+8. **Firma Digital y Código QR:** Sello criptográfico SHA-256 del contenido del dictamen y QR de verificación.
+
+---
+
+## 9. Cuadro Comparativo Global
+
+| Dimensión | Estado Anterior (AS-IS) | Estado Objetivo Actualizado (TO-BE) |
+|---|---|---|
+| **Proveedor Auth** | Local en navegador con PBKDF2 | **API Externa Auth & Audit (`auth-service-w3lo.onrender.com`)** |
+| **Auditoría** | No centralizada; sin traza de accesos | **Dual:** Local en PostgreSQL (`custody_audit_log`) y Central (`/api/internal/audit`) |
+| **Base de Datos** | Sin persistencia (en memoria) | **Neon PostgreSQL 16 (AWS sa-east-1)** con pooler y SSL forzado |
+| **Cadena de Custodia** | Un solo archivo efímero | **ISO/IEC 27037:** Master Copy (Read-Only) + Copia Forense de Trabajo con hash verificado |
+| **Veredicto** | Binario simple ('Fake'/'Real') | **Taxonomía Tripartita:** `MANIPULADO`, `SIN_MANIPULACION`, `ANTECEDENTES` |
+| **Marcas Temporales** | Segundos enteros aproximados | **Intervalos continuos exactos** (`timecode_start` - `timecode_end`, frames y pico) |
+| **XAI / Heatmaps** | EigenCAM difuso con GaussianBlur | **Grad-CAM++ / Rollout + Guided Filter** + Entrenamiento con máscaras de falsificación |
+| **Entregable Judicial** | JSON efímero en navegador | **Dictamen Pericial en PDF** con láminas demostrativas y firma digital |
