@@ -1,0 +1,250 @@
+# CertiFace — Marco Teórico y Fundamentación Conceptual
+
+**Documento Técnico de Soporte para la Memoria de Grado**  
+**Proyecto:** CertiFace — Plataforma Web Pericial para la Detección Forense de Suplantación de Identidad Digital (Deepfakes y Face Swap)  
+**Autor:** Alyce Maldonado  
+
+---
+
+## 0. Antecedentes
+
+La detección de deepfakes en video constituye un área de creciente interés y urgencia dentro de la visión por computador y la multimedia forense. La evolución vertiginosa de los modelos generativos, desde las Redes Generativas Antagónicas (GANs) clásicas hasta los modernos modelos de difusión probabilística, ha permitido la creación de contenido sintético con un fotorrealismo que resulta imperceptible para el ojo humano. Este avance tecnológico ha sido instrumentalizado para fines lesivos, tales como campañas de desinformación, fraudes corporativos y suplantación de identidad en medios digitales, generando una apremiante necesidad de herramientas forenses científicas que permitan autenticar la evidencia audiovisual y certificar su validez en contextos periciales y judiciales.
+
+Sin embargo, los sistemas de detección actuales presentan deficiencias estructurales que limitan su aplicación forense práctica. En primer lugar, la mayoría operan como "cajas negras", careciendo de mecanismos de Inteligencia Artificial Explicable (XAI) que permitan a un perito auditar y defender visualmente las razones anatómicas o matemáticas de una clasificación. En segundo lugar, sufren del fenómeno de *shortcut learning*, sobreajustándose a artefactos específicos o al ruido de compresión de sus datasets de entrenamiento, lo que provoca una severa degradación en su capacidad de generalización cuando se enfrentan a generadores no vistos en el mundo real. En tercer lugar, abundan las soluciones basadas en servicios comerciales propietarios en la nube que vulneran la soberanía de la prueba, carecen de trazabilidad del ciclo de vida del dato y no implementan protocolos formales de cadena de custodia digital. Estas limitaciones impiden que los avances de laboratorio se traduzcan en dictámenes periciales defendibles con rigor jurídico.
+
+En respuesta a esta problemática, el presente proyecto desarrolla la plataforma pericial denominada **CertiFace**, orientada a la detección y peritaje de suplantación de identidad (específicamente *face swap* y síntesis generativa por GANs y difusión) en imágenes y videos. El sistema se fundamenta en una arquitectura desacoplada basada en patrones Hexagonales (Puertos y Adaptadores) para la aplicación web construida con Astro y TypeScript, interactuando con una interfaz de servicios de inferencia desarrollada sobre FastAPI y PyTorch. Con el propósito de mitigar el *shortcut learning* y maximizar la capacidad de generalización, la solución adopta un paradigma de Mezcla de Expertos (Mixture of Experts, MoE) que articula múltiples modelos especializados pre-entrenados integrados directamente para inferencia:
+
+* **Un detector facial ligero (YuNet en formato ONNX):** localiza y normaliza la región facial con un margen anatómico del 35%.
+* **El Perito 1 (EfficientNet-B0):** especializado en capturar las firmas texturales de rostros sintéticos provenientes de arquitecturas GAN (StyleGAN).
+* **El Perito 2 (EfficientNet-B7 noisy-student):** especializado en identificar anomalías y bordes de mezcla propios de técnicas de *face swap* en video.
+* **El Perito 3 (SigLIP2 Vision Transformer):** especializado en reconocer las características sutiles de síntesis generada por modelos modernos de difusión.
+* **La Sonda de Escena Generada (ensamble de SigLIP2-SO400M y DINOv2-L con adaptadores LoRA):** encargada de contrastar el encuadre completo de la escena para discernir entre la presencia de filtros de cámara locales y la síntesis global por IA.
+
+Para garantizar la soberanía probatoria y viabilizar el trabajo en estaciones forenses, el procesamiento computacionalmente intensivo de los modelos se ejecuta en la estación de trabajo local del analista, aprovechando aceleración por GPU (CUDA) cuando está disponible y degradando de forma resiliente a CPU en caso contrario. La orquestación en video muestrea fotogramas distribuidos uniformemente y aplica una agregación estadística especializada: la mediana para modelos de generación global y el segundo máximo para el detector de *face swap*, capturando picos intermitentes de manipulación sin diluirlos en el promedio temporal. Para la justificación visual de los hallazgos, el prototipo integra un módulo de explicabilidad visual basado en **EigenCAM**, el cual extrae el primer componente principal de las activaciones profundas mediante descomposición SVD sin costo de gradientes, fusionando las señales de los peritos en mapas de calor calibrados sobre una escala cromática de riesgo.
+
+Bajo los lineamientos de la norma internacional **ISO/IEC 27037**, la preservación de la evidencia digital se articula mediante el principio de inmutabilidad: la evidencia original se custodia en modo de sólo lectura (*Master Copy*) y las transformaciones de decodificación e inferencia se ejecutan exclusivamente sobre una copia forense verificada (*Working Copy*), validando la correspondencia biunívoca mediante funciones hash SHA-256.
+
+Para la gestión integral y el respaldo pericial, el proyecto incorpora una arquitectura de persistencia, almacenamiento e identidad:
+* **Almacenamiento Seguro de Evidencias en AWS S3 y Persistencia en PostgreSQL:** Los videos y archivos de evidencia audiovisual se custodian en un repositorio de objetos en la nube (**AWS S3**) con estricto control de acceso. Paralelamente, una base de datos relacional (**PostgreSQL en Neon DB**) almacena los metadatos de los expedientes, la bitácora de custodia, las marcas de tiempo y las URLs seguras de la evidencia enlazadas indisolublemente a sus respectivos hashes criptográficos.
+* **Microservicio de Autenticación y Auditoría Centralizada:** La identidad del analista y la trazabilidad de las actuaciones se articulan contra un microservicio externo desplegado en Render, consumiendo credenciales JWT Bearer, extrayendo los datos de acreditación del perito (`/api/auth/me`) y registrando de manera dual e inmutable cada acceso y análisis en el colector central de auditoría (`POST /api/internal/audit`) y en la bitácora local (`custody_audit_log`).
+* **Detección Temporal de Inconsistencias (Timecodes):** El sistema implementa la detección de intervalos continuos en video, extrayendo marcas de inicio, fin y fotograma pico para ilustrar láminas demostrativas.
+* **Emisión de Dictámenes Periciales Judiciales en PDF:** La plataforma estructura y emite un certificado pericial formal en formato PDF que recopila la acreditación del perito, la cadena de custodia, la cronología de inconsistencias, las láminas demostrativas con mapas térmicos y las conclusiones y observaciones del perito judicial.
+
+Finalmente, la validación del sistema se estructura mediante métricas cuantitativas objetivas de clasificación (AUC-ROC, Sensibilidad/Recall, F1-Score y Exactitud) para corroborar la eficacia predictiva de los peritos y del ensamble frente a secuencias auténticas y manipuladas.
+
+---
+
+## 1. Introducción y Alcance del Marco Teórico
+
+El presente marco teórico reúne de manera fundamentada los conceptos teóricos, metodológicos y algorítmicos que **sustentan científica y técnicamente el desarrollo del proyecto CertiFace**.
+
+Cada concepto se expone bajo un doble enfoque:
+1. **Definición Conceptual (¿Qué es?):** Fundamento teórico formal en visión por computador, inteligencia artificial, arquitectura de software y forense digital.
+2. **Aplicación en CertiFace (¿Cómo se utiliza en el proyecto?):** Rol conciso dentro de la plataforma y su vinculación con los módulos del sistema (la explicación detallada paso a paso se profundiza en la metodología).
+
+---
+
+## 2. Delimitación del Alcance: Conceptos Descartados
+
+Para garantizar rigor académico y congruencia con la implementación, se han **excluido formalmente** del marco teórico los siguientes conceptos que no forman parte del pipeline de CertiFace:
+
+* **Lip-Sync (Sincronización Labial):** Descartado porque CertiFace procesa la evidencia de forma **puramente visual** (fotogramas y recortes faciales); no incluye módulos de audio ni modelos audio-visuales (Wav2Lip, SyncNet).
+* **Artefactos de Remuestreo (USA - Upsampling Artifacts):** Descartado porque requiere clasificadores espectrales en el dominio frecuencial (FFT/DCT). CertiFace opera en el dominio espacial.
+* **Facial Feature Drift (FFD):** Descartado en cuanto a redes recurrentes (LSTM) o convoluciones 3D. CertiFace evalúa fotogramas 2D independientes con agregación estadística temporal.
+* **Transfer Learning / Fine-Tuning de Redes:** Descartado como aporte o actividad del proyecto. CertiFace **no entrenó ni reentrenó pesos neuronales**; utiliza modelos pre-entrenados especializados como motores congelados para inferencia directa.
+* **Métodos XAI con Gradientes (Grad-CAM++, HiResCAM, Attention Rollout) y Filtros Guiados:** Descartados de la implementación actual. CertiFace implementa exclusivamente **EigenCAM** (descomposición SVD sin gradientes) con suavizado de imagen.
+* **SSIM (Structural Similarity Index Measure):** Descartado porque exige una imagen auténtica original de referencia, la cual no existe en un examen pericial real.
+* **Métricas de Segmentación para Mapas de Calor (Drop in Confidence, IoU):** Descartadas por no realizarse enmascaramiento perturbativo ni disponerse de máscaras de anotación pixel a pixel en el flujo de inferencia.
+
+---
+
+## 3. Catálogo de Conceptos Validados
+
+```
+                                  MAPA CONCEPTUAL CERTIFACE
+                                              │
+         ┌───────────────────┬────────────────┴───────────────────┬───────────────────┐
+         ▼                   ▼                                    ▼                   ▼
+    [Generación &       [Modelos &                           [XAI & Decisión     [Arquitectura &
+     Dominio]            Inferencia]                          Forense]            Custodia]
+    • Deepfake          • Mixture of Experts (MoE)           • XAI / Heatmaps    • ISO/IEC 27037
+    • Face Swap         • YuNet (ONNX)                       • EigenCAM          • Master/Working Copy
+    • GANs (StyleGAN)   • EfficientNet-B0 / B7               • Taxonomía 3-part  • Hash SHA-256
+    • Difusión          • SigLIP2 (ViT)                      • Timecodes         • AWS S3 + Neon DB
+    • Inconsistencias   • DINOv2 (Auto-supervisado)                              • Hexagonal (Astro)
+    • Shortcut Learn.                                                            • Microservicios / Auth
+                                                                                 • Dictamen en PDF
+                                                                                 • Métricas Clasificación
+```
+
+---
+
+### BLOQUE 1: Dominio del Problema y Generación Multimedia
+
+#### 1.1. Deepfake
+* **Concepto:** Contenido multimedia sintético o alterado (imagen, video o audio) generado mediante técnicas avanzadas de aprendizaje profundo, diseñado para manipular o suplantar la identidad de una persona real con alto grado de fotorrealismo.
+* **Cómo se utiliza en CertiFace:** Es el **objeto central de peritaje** del sistema. La plataforma está concebida como un entorno pericial forense para determinar la autenticidad o falsedad de evidencias audiovisuales sospechosas de haber sido manipuladas por inteligencia artificial.
+
+#### 1.2. Face Swap
+* **Concepto:** Técnica de manipulación que reemplaza el rostro de una persona de origen sobre el cuerpo y contexto de una persona receptora en una imagen o video, conservando el entorno pero produciendo posibles discontinuidades en los bordes de mezcla, tono de piel, coherencia anatómica e iluminación.
+* **Cómo se utiliza en CertiFace:** Es una de las familias principales de manipulación analizadas. Es detectado por el **Perito 2 (`backend/app/faceswap_model.py`)** y evaluado en video mediante la estadística del **segundo máximo** para registrar instantes de manipulación intermitente.
+
+#### 1.3. Redes Generativas Antagónicas (GANs)
+* **Concepto:** Arquitectura de aprendizaje profundo compuesta por dos redes neuronales que compiten entre sí: un generador que sintetiza imágenes artificiales y un discriminador que intenta distinguir las muestras reales de las sintéticas. En manipulación facial, modelos como StyleGAN permiten sintetizar rostros completos fotorrealistas.
+* **Cómo se utiliza en CertiFace:** Representa la familia de síntesis facial completa que examina el **Perito 1 (`backend/app/model.py`)**, encargado de capturar firmas texturales características de generadores GAN clásicos.
+
+#### 1.4. Modelos de Difusión
+* **Concepto:** Modelos generativos basados en procesos estocásticos que destruyen gradualmente la estructura de una imagen añadiendo ruido gaussiano y aprenden a revertir dicho proceso para generar imágenes de alta fidelidad y realismo superior a las GANs (ej. Midjourney, Stable Diffusion, Flux, Sora).
+* **Cómo se utiliza en CertiFace:** Define la familia de deepfakes modernos que evalúa el **Perito 3 (`backend/app/diffusion_model.py`)** sobre el rostro y la **Sonda de Escena (`backend/app/scene_model.py`)** sobre el encuadre completo, donde los detectores de GANs tradicionales pierden eficacia.
+
+---
+
+### BLOQUE 2: Artefactos y Paradigmas Forenses de Detección
+
+#### 2.1. Inconsistencias Faciales y Artefactos de Fusión
+* **Concepto:** Anomalías morfológicas y cromáticas que surgen del proceso de inserción y difuminado (*blending*) de una máscara generada sobre el rostro receptor: bordes dobles, discontinuidades en la línea de la mandíbula, transiciones bruscas de textura dérmica e incoherencias de iluminación entre el rostro y el cuello.
+* **Cómo se utiliza en CertiFace:** Constituyen el objetivo primario de inspección de los clasificadores faciales y fundamentan los criterios del **Checklist de Peritaje Manual (`web/src/domain/checklist.ts`)**, permitiendo al analista humano resolver casos ambiguos mediante inspección visual guiada.
+
+#### 2.2. Shortcut Learning (Aprendizaje de Atajos)
+* **Concepto:** Fenómeno por el cual los clasificadores neuronales aprenden correlaciones estadísticas espurias presentes en los datos de entrenamiento (como ruido de compresión específico, tamaño de parche o sesgos de cámara) en lugar de comprender la esencia de la manipulación, provocando fallos ante generadores no vistos.
+* **Cómo se utiliza en CertiFace:** Constituye la justificación teórica para implementar una arquitectura multiexperto (MoE) con detectores independientes por familia y una sonda de escena completa, evitando la dependencia de un único clasificador sobreajustado.
+
+#### 2.3. Mixture of Experts (MoE / Ensamble Multimodelo de Inferencia)
+* **Concepto:** Paradigma arquitectónico donde un problema analítico complejo se divide entre múltiples modelos especializados («expertos»), integrando sus predicciones mediante reglas de decisión o agregación.
+* **Cómo se utiliza en CertiFace:** Es el núcleo de inferencia en `backend/app/model.py`. Orquesta tres peritos faciales (GAN, Face Swap y Difusión) y una sonda de escena completa, combinando sus probabilidades mediante reglas heurísticas periciales: la mediana para síntesis global, el segundo máximo para face swap y contraprueba de encuadre.
+
+#### 2.4. Detector Facial YuNet (ONNX)
+* **Concepto:** Detector de rostros de ultra-alta velocidad basado en redes neuronales compactas y empaquetado en formato abierto ONNX, diseñado para inferencia eficiente con mínimo consumo computacional.
+* **Cómo se utiliza en CertiFace:** Se integra en `backend/app/preprocessing.py` mediante OpenCV (`cv2.FaceDetectorYN`). Detecta el rostro principal en cada fotograma y aplica un recorte ampliado con un margen del 35%, normalizando la región anatómica que ingresa a los peritos.
+
+---
+
+### BLOQUE 3: Arquitecturas de Aprendizaje Profundo Utilizadas para Inferencia
+
+#### 3.1. Redes Neuronales Convolucionales (CNN) y EfficientNet (B0 / B7)
+* **Concepto:** Arquitecturas neuronales basadas en filtros convolucionales invariantes a traslación que extraen características espaciales jerárquicas (bordes, texturas, formas). EfficientNet optimiza el balance entre profundidad, ancho y resolución de entrada mediante escalado compuesto.
+* **Cómo se utiliza en CertiFace:** Se emplean modelos pre-entrenados basados en estas arquitecturas para inferencia: EfficientNet-B0 en el Perito 1 para clasificar síntesis GAN, y EfficientNet-B7 en el Perito 2 para detectar artefactos de *face swap*.
+
+#### 3.2. Vision Transformers (ViT) y SigLIP2
+* **Concepto:** Arquitectura de visión que divide la imagen en parches bidimensionales y los procesa como tokens mediante mecanismos de autoatención para capturar dependencias espaciales a larga distancia. SigLIP2 emplea una función de pérdida sigmoidea que mejora la discriminación semántica visual.
+* **Cómo se utiliza en CertiFace:** Se utiliza un modelo pre-entrenado `SiglipForImageClassification` en el Perito 3 (`backend/app/diffusion_model.py`) para reconocer características de difusión sobre el rostro recortado.
+
+#### 3.3. DINOv2 (Vision Transformer Auto-supervisado)
+* **Concepto:** Modelo de visión basado en Transformer entrenado mediante destilación auto-supervisada sobre conjuntos masivos sin etiquetas, aprendiendo representaciones visuales que codifican propiedades geométricas y semánticas globales de la escena.
+* **Cómo se utiliza en CertiFace:** Se integra en la Sonda de Escena (`backend/app/scene_model.py`) junto a SigLIP2 para analizar el fotograma completo, permitiendo comprobar si el fondo, la ropa o los objetos presentan incoherencias de síntesis por IA.
+
+---
+
+### BLOQUE 4: Inteligencia Artificial Explicable (XAI) y Decisión Forense
+
+#### 4.1. Inteligencia Artificial Explicable (XAI) y Mapas de Calor
+* **Concepto:** Conjunto de técnicas orientadas a hacer comprensibles las decisiones de modelos de caja negra. Los mapas de calor (*heatmaps*) proyectan sobre la imagen una escala cromática donde la intensidad del color representa la importancia relativa de cada región espacial en la predicción.
+* **Cómo se utiliza en CertiFace:** Es el pilar demostrativo visual del sistema. En lugar de limitarse a un porcentaje numérico, genera láminas explicativas donde una paleta de riesgo (verde: bajo; amarillo: medio; naranja/rojo: severo) destaca las regiones faciales que sustentan el dictamen (`backend/app/explain.py`).
+
+#### 4.2. EigenCAM
+* **Concepto:** Técnica de explicabilidad para redes visuales que proyecta el primer componente principal de las activaciones de las capas profundas mediante descomposición en valores singulares (SVD). Opera sin requerir gradientes de retropropagación y es independiente de la clase.
+* **Cómo se utiliza en CertiFace:** Es la técnica XAI implementada en `backend/app/explain.py`. Mediante la clase `FacialCapture`, captura las activaciones profundas de los peritos en una sola pasada de inferencia y las fusiona por máximo ponderado, generando el mapa térmico de atención del analista.
+
+#### 4.3. Taxonomía Tripartita Forense
+* **Concepto:** Esquema de clasificación categórica adaptado a las exigencias procesales judiciales que contempla tres estados decisionales: certeza de manipulación, certeza de autenticidad o reserva técnica fundada (indicios no concluyentes).
+* **Cómo se utiliza en CertiFace:** Estructura la salida oficial del sistema (`VerdictEnum` en `backend/app/schemas.py` y `backend/app/models_db.py`): `MANIPULADO`, `SIN_MANIPULACION` o `ANTECEDENTES`, habilitando en este último caso la aplicación del protocolo pericial manual.
+
+#### 4.4. Detección Temporal de Inconsistencias (Timecodes)
+* **Concepto:** Procedimiento forense orientado a localizar cronológicamente los intervalos continuos (marca de inicio, fin y momento de máxima anomalía) en los que se manifiesta la alteración en un video.
+* **Cómo se utiliza en CertiFace:** Se implementa en la tabla `timecode_inconsistencies` (`backend/app/models_db.py`), registrando cada intervalo anómalo con formato de tiempo `00:00:ss.mmm`, la familia de manipulación asociada y el fotograma pico correspondiente.
+
+---
+
+### BLOQUE 5: Arquitectura de Software, Persistencia e Integración
+
+#### 5.1. Almacenamiento en Objetos en la Nube (AWS S3)
+* **Concepto:** Modelo de almacenamiento en la nube diseñado para resguardar grandes volúmenes de datos binarios no estructurados e inmutables mediante identificadores únicos y políticas estrictas de control de acceso.
+* **Cómo se utiliza en CertiFace:** Se utiliza para la custodia y resguardo seguro de los videos y fotos de evidencia original (*Master Copy*), las copias de trabajo y los archivos generados, garantizando persistencia remota y eliminando riesgos de alteración local.
+
+#### 5.2. Bases de Datos Relacionales (PostgreSQL en Neon DB)
+* **Concepto:** Sistema gestor de base de datos relacional que asegura integridad transaccional (ACID), soporte de tipos estructurados y relaciones sólidas entre entidades.
+* **Cómo se utiliza en CertiFace:** Aloja el esquema relacional (`forensic_cases`, `evidences`, `custody_audit_log`, `analysis_reports`, `timecode_inconsistencies`), registrando los datos periciales y las URLs seguras de AWS S3 asociadas a sus respectivos hashes SHA-256.
+
+#### 5.3. Arquitectura Hexagonal (Puertos y Adaptadores)
+* **Concepto:** Patrón de diseño de software que desacopla la lógica de negocio central (dominio y casos de uso) de los detalles tecnológicos externos (marcos web, APIs, bases de datos e interfaces de usuario).
+* **Cómo se utiliza en CertiFace:** Rige la arquitectura del frontend web desarrollado en Astro y TypeScript (`web/src/`), organizando el código en capas independientes: `domain/` (reglas forenses y modelos de dictamen), `application/` (casos de uso y puertos), `infrastructure/` (adaptadores HTTP y Web Crypto) y `ui/` (interfaz visual).
+
+#### 5.4. Microservicios y Auditoría Centralizada
+* **Concepto:** Enfoque arquitectónico donde componentes especializados (autenticación y bitácora de seguridad) funcionan de forma autónoma y exponen servicios protegidos mediante APIs seguras.
+* **Cómo se utiliza en CertiFace:** Implementado en `backend/app/auth_service.py` para validar sesiones JWT Bearer del perito (`/api/auth/me`) y reportar cada evento de análisis hacia el colector central de auditoría (`POST /api/internal/audit`), sincronizándolo con la bitácora local.
+
+#### 5.5. Desarrollo Iterativo e Incremental
+* **Concepto:** Metodología de ingeniería de software basada en ciclos repetidos de diseño, desarrollo y prueba, donde el sistema se amplía mediante incrementos funcionales verificables.
+* **Cómo se utiliza en CertiFace:** Metodología adoptada para la construcción de la plataforma: desde la integración del pipeline de inferencia multimodelo hasta la plataforma web completa con custodia, base de datos y auditoría.
+
+---
+
+### BLOQUE 6: Forense Digital, Integridad y Dictámenes
+
+#### 6.1. Forense Digital
+* **Concepto:** Disciplina científico-técnica orientada a la identificación, preservación, extracción, análisis y presentación de evidencia digital admisible en procesos judiciales o administrativos.
+* **Cómo se utiliza en CertiFace:** Es la disciplina marco en la que se inscribe el proyecto. Cada módulo del sistema está diseñado bajo principios de trazabilidad, reproducibilidad y fundamentación técnica.
+
+#### 6.2. Cadena de Custodia Digital y Norma ISO/IEC 27037
+* **Concepto:** Conjunto de pautas y estándares internacionales para la preservación inalterable de evidencias digitales, estableciendo la distinción entre Evidencia Original (*Master Copy*) y Copia Forense de Trabajo (*Working Copy*).
+* **Cómo se utiliza en CertiFace:** Se implementa en `backend/app/forensic_storage.py` preservando el archivo original en modo de sólo lectura y ejecutando la decodificación e inferencia exclusivamente sobre la copia forense de trabajo, verificando su correspondencia exacta.
+
+#### 6.3. Hash Criptográfico SHA-256
+* **Concepto:** Función hash unidireccional estandarizada (FIPS PUB 180-4) que genera una huella digital determinista y única de 256 bits representativa de un archivo binario. Cualquier alteración mínima produce un hash completamente diferente.
+* **Cómo se utiliza en CertiFace:** Se calcula en el navegador mediante Web Crypto API (`web/src/domain/integrity.ts`) y en el backend con `hashlib`, certificando la integridad de la evidencia cargada, de la copia de trabajo y del expediente pericial.
+
+#### 6.4. Dictamen Pericial Judicial en Formato PDF
+* **Concepto:** Documento pericial estructurado conforme a las exigencias procesales que reúne la acreditación del perito, el historial de cadena de custodia, los resultados cuantitativos del examen, la justificación gráfica y las conclusiones del analista.
+* **Cómo se utiliza en CertiFace:** Es el entregable formal generado por el sistema que compila toda la información del análisis: metadatos, marcas de tiempo de las inconsistencias, láminas demostrativas con mapas térmicos y las observaciones u opiniones técnicas del perito.
+
+---
+
+### BLOQUE 7: Métricas de Evaluación Cuantitativa
+
+#### 7.1. Métricas de Clasificación (Exactitud, Sensibilidad/Recall, F1-Score y AUC-ROC)
+* **Concepto:** Indicadores estadísticos para medir el rendimiento de modelos clasificadores:
+  * *Exactitud (Accuracy):* Porcentaje de acierto global $(TP + TN) / Total$.
+  * *Sensibilidad (Recall):* Proporción de deepfakes reales identificados con éxito $TP / (TP + FN)$ (métrica crítica para evitar falsos negativos en contextos periciales).
+  * *F1-Score:* Media armónica entre precisión y sensibilidad.
+  * *AUC-ROC:* Área bajo la curva de rendimiento a través de diferentes umbrales de decisión.
+* **Cómo se utiliza en CertiFace:** Son las métricas cuantitativas empleadas para medir y reportar la capacidad discriminativa de los modelos de inferencia y del ensamble multimodelo frente a conjuntos de prueba forenses.
+
+---
+
+## 4. Matriz de Trazabilidad: Conceptos vs. Componentes del Código
+
+| Concepto Teórico Validado | Componente en el Repositorio | Archivo Fuente Principal |
+| :--- | :--- | :--- |
+| **Deepfake / MoE** | Orquestador de Peritos y Reglas de Agregación | `backend/app/model.py` |
+| **Face Swap** | Perito 2: EfficientNet-B7 (DFDC) | `backend/app/faceswap_model.py` |
+| **GANs (StyleGAN)** | Perito 1: EfficientNet-B0 | `backend/app/model.py` |
+| **Modelos de Difusión** | Perito 3: SigLIP2 base 512 px | `backend/app/diffusion_model.py` |
+| **Contexto Global** | Sonda de Escena: SigLIP2-SO400M + DINOv2-L | `backend/app/scene_model.py` |
+| **Detección Facial** | Extracción y Recorte YuNet (ONNX) | `backend/app/preprocessing.py` |
+| **XAI / Heatmaps** | EigenCAM Fusionado + Escala de Riesgo | `backend/app/explain.py` |
+| **Custodia e Ingesta Forense** | Preservación ISO/IEC 27037 (Master/Working) | `backend/app/forensic_storage.py` |
+| **Persistencia Relacional** | Esquema SQL de Expedientes y Timecodes | `backend/app/models_db.py` y `backend/app/database.py` |
+| **Almacenamiento en Nube** | Custodia de Evidencias en S3 y URLs en BD | `backend/app/forensic_storage.py` y `backend/app/models_db.py` |
+| **Microservicio Auth & Audit** | Validación JWT y Eventos de Auditoría | `backend/app/auth_service.py` |
+| **Arquitectura Hexagonal** | Dominio, Puertos, Adaptadores y UI Web | `web/src/` |
+| **Integridad SHA-256 Web** | Cálculo Web Crypto en Navegador | `web/src/domain/integrity.ts` |
+| **Checklist Pericial** | Protocolo de Inspección Visual Manual | `web/src/domain/checklist.ts` |
+| **Dictamen Pericial PDF / Timecodes** | Endpoints de Análisis, Reportes y Timecodes | `backend/app/main.py` |
+
+---
+
+## 5. Propuesta de Redacción para la Sección Antecedentes (LaTeX)
+
+```latex
+\section{Antecedentes}
+
+La detección de deepfakes en video es un área de creciente interés dentro de la visión por computador y la multimedia forense. Los avances en modelos generativos, como las Redes Generativas Antagónicas (GANs) y los modelos de difusión probabilística, han permitido la creación de contenido sintético de alta calidad que resulta sumamente difícil de distinguir del contenido auténtico para el ojo humano \cite{cohen_giryes_2022}, \cite{gallon_2025}. Este fenómeno ha sido aprovechado para fines maliciosos, incluyendo campañas de desinformación, fraudes corporativos y suplantación de identidad, lo que ha generado una necesidad apremiante de sistemas forenses que permitan verificar científicamente la autenticidad de la evidencia digital \cite{survey_benchmark}, \cite{acm_survey}.
+
+Sin embargo, los detectores de deepfakes existentes presentan limitaciones significativas. En primer lugar, muchos operan como ``cajas negras'', sin proporcionar mecanismos de explicabilidad que permitan a un perito comprender y auditar las razones detrás de una clasificación \cite{acm_survey}. En segundo lugar, estos modelos suelen incurrir en el fenómeno de \textit{shortcut learning}, sobreajustándose a artefactos específicos de los conjuntos de datos de entrenamiento, lo que reduce drásticamente su capacidad de generalización ante nuevos generadores no vistos \cite{orthogonal_subspace}. En tercer lugar, la mayoría de las herramientas comerciales dependen de servicios propietarios cerrados que no garantizan una cadena de custodia estricta ni permiten la auditabilidad del proceso de examen sobre la evidencia digital sensible \cite{acm_survey}. Estas limitaciones dificultan la aplicación práctica de los avances académicos en contextos forenses y judiciales reales, donde se requiere una herramienta auditable, transparente y con trazabilidad completa.
+
+En este contexto, el presente proyecto propone el desarrollo de una plataforma web forense denominada CertiFace, orientada a la detección de suplantación de identidad digital (face swap y deepfakes generativos) en imágenes y videos para soporte a la decisión pericial. El sistema adopta una arquitectura de Mezcla de Expertos (Mixture of Experts, MoE) compuesta por múltiples modelos especializados pre-entrenados: clasificadores convolucionales (EfficientNet-B0 y B7) para síntesis GAN y face swap, un Vision Transformer (SigLIP2) para manipulaciones modernas por difusión, y un ensamble de contexto global (SigLIP2 + DINOv2) como sonda de escena completa. 
+
+El sistema adopta una arquitectura desacoplada basada en patrones Hexagonales (Puertos y Adaptadores) en el frontend web desarrollado en Astro y TypeScript, interactuando con una API de inferencia en FastAPI. El procesamiento intensivo de inferencia se ejecuta en la estación de trabajo del perito, aprovechando aceleración por GPU cuando está disponible y degradando a CPU en caso contrario. Para garantizar la preservación inmutable conforme a los principios de la norma ISO/IEC 27037, la evidencia audiovisual se resguarda en almacenamiento en la nube (AWS S3), mientras que los metadatos de los expedientes, la trazabilidad de hashes SHA-256 y la auditoría se registran en una base de datos relacional (PostgreSQL en Neon DB). Asimismo, la identidad del perito y la bitácora centralizada de eventos se articulan con un microservicio externo de autenticación y auditoría, garantizando el no repudio.
+
+El prototipo incorpora un módulo de explicabilidad visual (XAI) mediante mapas de calor fundamentados en EigenCAM, extrayendo las activaciones de los modelos mediante descomposición SVD para justificar visualmente la decisión. Asimismo, el sistema genera dictámenes periciales estructurados en formato PDF con marcas de tiempo continuas (\textit{timecodes}), láminas demostrativas y observaciones del perito, garantizando la reproducibilidad y defendibilidad del análisis. Finalmente, la evaluación cuantitativa del prototipo se realiza midiendo la eficacia predictiva de los modelos mediante métricas estándar de clasificación (AUC-ROC, Recall, F1-Score y Exactitud).
+```
