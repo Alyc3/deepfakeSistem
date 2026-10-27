@@ -14,3 +14,8 @@ sqlalchemy
 asyncpg
 psycopg2-binary
 pyjwt
+
+python-dotenv
+
+boto3>=1.40,<2
+cryptography>=46,<49

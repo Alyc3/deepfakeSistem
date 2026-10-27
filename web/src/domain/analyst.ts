@@ -1,8 +1,8 @@
 /**
  * Dominio — Perito.
  *
- * Control de acceso al puesto de trabajo de un solo perfil. No es un sistema
- * de identidad multiusuario: es la firma de quien opera el laboratorio.
+ * Estado de acceso institucional. La identidad se valida en el servicio de usuarios.
+ * Los tipos de credenciales locales se conservan para los adaptadores antiguos.
  */
 
 export interface Credentials {

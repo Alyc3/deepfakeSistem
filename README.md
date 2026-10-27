@@ -1,5 +1,15 @@
 # CertiFace — Peritaje de Medios Digitales
 
+> **Actualización de identidad:** la web ahora usa Astro SSR, sidebar por permisos
+> y sesiones HttpOnly. El acceso usa el servicio central de usuarios y roles;
+> `/predict` requiere autenticación y permiso de laboratorio. Consulta
+> [la guía de integración](docs/autenticacion.md) para configuración, uso y pruebas.
+> Las referencias al registro local PBKDF2 que aparecen más abajo describen el flujo anterior.
+
+> **Almacén forense:** originales, copias y reportes ahora se preservan cifrados
+> y sellados en R2. El flujo `/predict` también archiva sus resultados. Consulta
+> [la implementación y operación del almacén](docs/ALMACEN_FORENSE_S3.md).
+
 Sistema pericial para casos de **suplantación de identidad** (face swap y
 deepfake), compuesto por una **API de inferencia en FastAPI** y una
 **aplicación web responsive construida en Astro con arquitectura hexagonal**.

@@ -10,7 +10,7 @@ export interface LabSettings {
 }
 
 export const DEFAULT_SETTINGS: LabSettings = {
-  apiUrl: "http://127.0.0.1:8000",
+  apiUrl: "/api/forensics",
 };
 
 /** Sin barra final: todas las rutas se componen con `${base}/algo`. */

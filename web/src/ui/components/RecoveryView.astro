@@ -1,0 +1,42 @@
+---
+interface Props { reset?: boolean; }
+const { reset = false } = Astro.props;
+---
+<main class="view view-login">
+  <section class="login-card">
+    <img src="/assets/art/reticle.svg" alt="" class="login-reticle" aria-hidden="true" />
+    <p class="eyebrow">Recupera tu acceso</p>
+    <h1 class="login-title">{reset ? "Nueva contraseña" : "¿Olvidaste tu contraseña?"}</h1>
+    <p class="login-hint">{reset ? "Usa el código de tu enlace de recuperación." : "Te enviaremos un enlace para volver a entrar."}</p>
+    <form id="recovery-form" data-reset={String(reset)} class="login-form">
+      {reset ? <><label class="field"><span class="mono-label">Código de recuperación</span><input id="reset-token" class="text-input" name="token" required autocomplete="off" /></label><label class="field"><span class="mono-label">Nueva contraseña</span><input class="text-input" name="new_password" type="password" required autocomplete="new-password" maxlength="1024" /></label><label class="field"><span class="mono-label">Repetir contraseña</span><input class="text-input" name="confirmation" type="password" required autocomplete="new-password" /></label></> : <label class="field"><span class="mono-label">Correo electrónico</span><input class="text-input" name="email" type="email" required autocomplete="email" /></label>}
+      <p id="recovery-message" class="login-error" role="status" aria-live="polite" hidden></p>
+      <button class="primary-button" type="submit">{reset ? "Actualizar contraseña" : "Enviar enlace"}</button>
+    </form>
+    <div class="login-links"><a class="link-button" href="/login">← Volver al acceso</a>{!reset && <a class="link-button" href="/restablecer">Tengo un código</a>}</div>
+  </section>
+</main>
+<script>
+  import { lab } from "@ui/client/lab";
+  const form = document.getElementById("recovery-form") as HTMLFormElement;
+  const message = document.getElementById("recovery-message")!;
+  const reset = form.dataset.reset === "true";
+  if (reset) {
+    const token = new URLSearchParams(window.location.search).get("token");
+    if (token) { (document.getElementById("reset-token") as HTMLInputElement).value = token; window.history.replaceState(null, "", "/restablecer"); }
+  }
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector("button")!;
+    const data = new FormData(form);
+    if (reset && data.get("new_password") !== data.get("confirmation")) { message.textContent = "Las contraseñas no coinciden."; message.hidden = false; return; }
+    button.disabled = true; message.hidden = true;
+    try {
+      message.textContent = reset
+        ? await lab().identity.resetPassword(String(data.get("token")), String(data.get("new_password")))
+        : await lab().identity.recoverPassword(String(data.get("email")));
+      form.reset(); button.hidden = true;
+    } catch (error) { message.textContent = error instanceof Error ? error.message : "No se pudo conectar. Intenta de nuevo."; }
+    finally { button.disabled = false; message.hidden = false; form.querySelectorAll<HTMLInputElement>('input[type="password"]').forEach((input) => input.value = ""); }
+  });
+</script>

@@ -6,9 +6,8 @@
  * las dos coinciden, el material es bit a bit el mismo que se recibió; si no,
  * algo lo alteró por el camino (recorte, recompresión, sustitución).
  *
- * La comprobación **nunca bloquea el análisis**. Un perito puede querer
- * examinar material alterado precisamente porque está alterado; lo que el
- * sistema debe hacer es advertirlo y dejar constancia, no decidir por él.
+ * Este módulo compara huellas. El caso de uso de admisión aplica la política
+ * de custodia y bloquea la presentación de un material con discrepancia.
  */
 
 /** Algoritmos que ofrece el navegador, indexados por longitud del hash. */

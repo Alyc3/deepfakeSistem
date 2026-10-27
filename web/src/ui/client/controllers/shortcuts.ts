@@ -8,7 +8,6 @@
 import { currentViewIsLab } from "../view-router";
 import { openFilePicker, resetAll } from "./evidence.controller";
 import { analyze } from "./analysis.controller";
-import { toggleSettings } from "./settings.controller";
 import { handleLogout } from "./auth.controller";
 import {
   heatmapHasStrip,
@@ -16,7 +15,6 @@ import {
   stepHeatmapFrame,
   toggleHeatmapZoom,
 } from "../presenters/heatmap.presenter";
-import { el } from "../dom";
 
 /** El foco en un campo de texto manda: las flechas mueven el cursor. */
 const typingInField = (target: EventTarget | null): boolean =>
@@ -24,14 +22,10 @@ const typingInField = (target: EventTarget | null): boolean =>
 
 export function wireShortcuts(): void {
   document.addEventListener("keydown", (event) => {
-    // Escape cierra el mapa ampliado o el panel de configuración, en ese
-    // orden, funcione donde funcione el foco.
+    // Escape cierra el mapa ampliado.
     if (event.key === "Escape") {
       if (heatmapIsExpanded()) {
         toggleHeatmapZoom(false);
-        event.preventDefault();
-      } else if (currentViewIsLab() && !el.settingsPanel.hidden) {
-        toggleSettings(false);
         event.preventDefault();
       }
       return;
@@ -62,7 +56,7 @@ export function wireShortcuts(): void {
       void analyze();
     } else if (meta && event.key === ",") {
       event.preventDefault();
-      toggleSettings(true);
+      window.location.assign("/app/seguridad");
     } else if (meta && event.shiftKey && event.key.toLowerCase() === "l") {
       event.preventDefault();
       handleLogout();

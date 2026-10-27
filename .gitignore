@@ -6,11 +6,31 @@ backend/venv/
 .env
 backend/.env
 
-# Pesos grandes de modelos de terceros: superan el límite de 100 MB de
+# Pesos grandes de modelos de terceros: superan el lÃ­mite de 100 MB de
 # GitHub y son re-descargables. Se reconstruyen con:
 #   python backend/scripts/fetch_models.py
-# (El Detector De Síntesis GAN, 16 MB, es entrenamiento propio irreemplazable
-# y sí se versiona.)
+# (El Detector De SÃ­ntesis GAN, 16 MB, es entrenamiento propio irreemplazable
+# y sÃ­ se versiona.)
 backend/models/Detector_De_Face_Swap.pth
 backend/models/Detector_De_Difusion_Facial/model.safetensors
 backend/models/Sonda_De_Escena_Generada/weights.pth
+
+# Web: sesión y entorno privados
+web/.env
+web/.env.*
+!web/.env.example
+web/.sessions/
+web/.astro/
+web/dist/
+web/node_modules/
+
+backend/logs/
+backend/storage_evidence/
+
+web/artifacts/
+
+# Claves y almacén forense privado
+backend/.secrets/
+backend/uploads/
+
+backend/.runtime-tmp/

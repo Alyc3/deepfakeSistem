@@ -1,3 +1,4 @@
+from pathlib import Path
 import io
 import logging
 from statistics import median
@@ -14,7 +15,7 @@ logger = logging.getLogger("certiface.model")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = EfficientNet.from_name('efficientnet-b0', num_classes=2)
-model.load_state_dict(torch.load('models/Detector_De_Sintesis_GAN.pth', map_location=device))
+model.load_state_dict(torch.load(Path(__file__).resolve().parent.parent / 'models' / 'Detector_De_Sintesis_GAN.pth', map_location=device, weights_only=True))
 model = model.to(device)
 model.eval()
 logger.info("Modelo cargado en %s", device)

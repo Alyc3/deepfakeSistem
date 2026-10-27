@@ -1,0 +1,8 @@
+---
+import BaseLayout from "@ui/layouts/BaseLayout.astro";
+import LoginView from "@ui/components/LoginView.astro";
+---
+<BaseLayout title="Acceder · CertiFace" description="Acceso a tu espacio de trabajo">
+  <LoginView />
+  <script>import { wireAuth } from "@ui/client/controllers/auth.controller"; wireAuth();</script>
+</BaseLayout>

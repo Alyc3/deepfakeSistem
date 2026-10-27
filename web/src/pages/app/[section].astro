@@ -1,0 +1,13 @@
+---
+import BaseLayout from "@ui/layouts/BaseLayout.astro";
+import LabView from "@ui/components/LabView.astro";
+import { serverConfig } from "@infrastructure/server/config";
+const user = Astro.locals.user!;
+const section = Astro.params.section!;
+---
+<BaseLayout title="CertiFace · Espacio de trabajo" description="Espacio de trabajo de CertiFace">
+  <a class="skip-link" href="#main-content">Saltar al contenido</a>
+  <LabView user={user} permissions={Astro.locals.permissions} section={section} policy={serverConfig().policy} />
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script>import { startLab } from "@ui/client/main"; startLab();</script>
+</BaseLayout>

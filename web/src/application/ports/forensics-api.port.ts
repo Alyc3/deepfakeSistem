@@ -5,7 +5,7 @@
  * de HTTP. Quien lo implemente (hoy `fetch`; mañana un mock de pruebas o un
  * canal distinto) queda fuera del núcleo.
  */
-import type { AnalysisResult } from "@domain/analysis";
+import type { AnalysisResult, ArchiveReceipt } from "@domain/analysis";
 import type { EvidenceFile } from "@domain/evidence";
 
 export type AnalysisOutcome =
@@ -20,6 +20,7 @@ export interface BackendStatus {
 }
 
 export interface ForensicsApiPort {
+  finalizeReport(archive: ArchiveReceipt, conclusions: string): Promise<{ ok: true; archive: ArchiveReceipt } | { ok: false; error: string }>;
   /** Somete el material al ensamble de peritos y devuelve el dictamen. */
   analyze(file: EvidenceFile): Promise<AnalysisOutcome>;
   /** Comprueba si el backend responde. */
