@@ -1,46 +1,37 @@
 ---
-/** Vista 3 — Laboratorio: evidencia a la izquierda, análisis a la derecha. */
-import EvidenceChamber from "@ui/components/EvidenceChamber.astro";
-import AnalysisPanel from "@ui/components/AnalysisPanel.astro";
+import { SECTIONS, type AccessPolicy, type Permission } from "@domain/access";
+import type { IdentityUser } from "@domain/identity";
+import Icon from "./Icon.astro";
+import UsersView from "./UsersView.astro";
+import RolesView from "./RolesView.astro";
+import AccountView from "./AccountView.astro";
+import EvidenceChamber from "./EvidenceChamber.astro";
+import AnalysisPanel from "./AnalysisPanel.astro";
+interface Props { user: IdentityUser; permissions: Permission[]; section: string; policy: AccessPolicy; }
+const { user, permissions, section, policy } = Astro.props;
+const available = SECTIONS.filter((item) => permissions.includes(item.permission));
+const active = SECTIONS.find((item) => item.id === section)!;
+const name = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email;
+const initials = name.split(/\s+/).slice(0,2).map((part) => part[0]).join("").toUpperCase();
 ---
-
-<section id="view-app" class="view view-app" hidden>
-  <header class="appbar">
-    <div class="brand">
-      <span class="brand-mark"></span>
-      <span class="brand-name">CertiFace</span>
-    </div>
-    <div class="appbar-status">
-      <span id="status-dot" class="status-dot" data-state="unknown"></span>
-      <button id="status-text" class="link-button" type="button">Comprobando backend…</button>
-    </div>
-    <div class="appbar-user">
-      <span id="analyst-name" class="mono-label"></span>
-      <button id="settings-toggle" class="ghost-button ghost-button--sm" type="button">Backend</button>
-      <button id="logout" class="ghost-button ghost-button--sm" type="button">Cerrar sesión</button>
-    </div>
-  </header>
-
-  <main class="workbench">
-    <div id="settings-panel" class="settings-panel" hidden>
-      <label class="field">
-        <span class="mono-label">URL del backend</span>
-        <div class="settings-row">
-          <input
-            id="api-url"
-            class="text-input"
-            type="text"
-            spellcheck="false"
-            placeholder="http://127.0.0.1:8000"
-          />
-          <button id="settings-save" class="ghost-button" type="button">Guardar</button>
-        </div>
-      </label>
-    </div>
-
-    <div class="workgrid">
-      <EvidenceChamber />
-      <AnalysisPanel />
-    </div>
-  </main>
-</section>
+<div id="view-app" class="app-shell" data-section={section} data-user={JSON.stringify(user)}>
+  <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="Cerrar navegación" hidden></button>
+  <aside id="app-sidebar" class="app-sidebar" aria-label="Navegación principal">
+    <a class="sidebar-brand" href="/app"><span class="brand-mark"></span><span>CertiFace<span class="brand-caption">FORENSIC WORKSPACE</span></span></a>
+    <span class="workspace-label"><span class="status-pip"></span>Espacio de trabajo</span>
+    <nav class="sidebar-nav">
+      {[...new Set(available.map((item) => item.group))].map((group) => <div class="nav-group"><p>{group}</p>{available.filter((item) => item.group === group).map((item) => <a class:list={["nav-item", { active: section === item.id }]} href={`/app/${item.id}`} aria-current={section === item.id ? "page" : undefined}><Icon name={item.icon} size={19} /><span>{item.label}</span>{section === item.id && <span class="nav-active-dot"></span>}</a>)}</div>)}
+    </nav>
+    <div class="sidebar-footer"><span class="sidebar-seal"><Icon name="shield" size={17} />Evidencia. Criterio. Confianza.</span><button id="logout" class="sidebar-logout" type="button"><Icon name="logout" size={18} />Cerrar sesión</button></div>
+  </aside>
+  <div class="app-main">
+    <header class="workspace-header"><div class="header-location"><button id="sidebar-toggle" class="icon-button mobile-menu" type="button" aria-label="Abrir navegación" aria-controls="app-sidebar" aria-expanded="false"><Icon name="menu" /></button><span class="breadcrumb">Espacio de trabajo<span>/</span><strong>{active.label}</strong></span></div><a class="header-profile" href="/app/perfil"><div class="header-profile-copy"><span id="analyst-name">{name}</span><small>{user.role.name}</small></div><span class="avatar-small">{initials}</span></a></header>
+    <main id="main-content" class="workspace-content">
+      {section === "laboratorio" && <><div class="page-heading"><div><p class="eyebrow">Análisis forense</p><h1>Laboratorio</h1><p class="page-description">De la evidencia al criterio pericial.</p></div><div class="connection-badge"><span id="status-dot" class="status-dot" data-state="unknown"></span><button id="status-text" class="link-button" type="button">Comprobando motor…</button></div></div><div class="workgrid"><EvidenceChamber /><AnalysisPanel /></div></>}
+      {section === "usuarios" && <UsersView />}
+      {section === "roles" && <RolesView policy={policy} />}
+      {["perfil", "seguridad"].includes(section) && <AccountView user={user} section={section} />}
+    </main>
+    <footer class="workspace-footer"><span>CertiFace / Peritaje digital</span><span>Acceso verificado</span></footer>
+  </div>
+</div>

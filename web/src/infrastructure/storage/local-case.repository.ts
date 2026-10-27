@@ -10,20 +10,20 @@ import { readJson, writeJson } from "./browser-storage";
 
 const KEY = "certiface:history";
 
-export function createLocalCaseRepository(): CaseRepositoryPort {
-  const read = (): CaseRecord[] => readJson<CaseRecord[]>("local", KEY, []);
+export function createLocalCaseRepository(userId: () => string | null): CaseRepositoryPort {
+  const read = (): CaseRecord[] => userId() ? readJson<CaseRecord[]>("local", `${KEY}:${userId()}`, []) : [];
 
   return {
     list: read,
 
     add(entry: CaseRecord): CaseRecord[] {
       const next = appendCase(read(), entry);
-      writeJson("local", KEY, next);
+      writeJson("local", `${KEY}:${userId()}`, next);
       return next;
     },
 
     clear(): CaseRecord[] {
-      writeJson("local", KEY, []);
+      writeJson("local", `${KEY}:${userId()}`, []);
       return [];
     },
   };

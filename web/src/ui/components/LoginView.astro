@@ -2,22 +2,23 @@
 /** Vista 2 — Acceso: identificación del perito antes de abrir el laboratorio. */
 ---
 
-<section id="view-login" class="view view-login" hidden>
+<section id="view-login" class="view view-login">
   <div class="login-card">
     <img src="/assets/art/reticle.svg" alt="" class="login-reticle" aria-hidden="true" />
-    <p class="eyebrow">Acceso restringido · Cadena de custodia</p>
-    <h1 id="login-title" class="login-title">Identificación del perito</h1>
+    <p class="eyebrow">Tu espacio de trabajo</p>
+    <h1 id="login-title" class="login-title">Bienvenido de nuevo</h1>
     <p id="login-hint" class="login-hint">
-      Introduce tu credencial para acceder al laboratorio.
+      Accede con tu cuenta institucional.
     </p>
 
     <form id="login-form" class="login-form">
+
       <label class="field">
-        <span class="mono-label">Credencial</span>
+        <span class="mono-label">Correo electrónico</span>
         <input
           id="login-user"
           class="text-input"
-          type="text"
+          type="email"
           autocomplete="username"
           spellcheck="false"
           required
@@ -31,15 +32,14 @@
           type="password"
           autocomplete="current-password"
           required
-          minlength="6"
         />
       </label>
       <p id="login-error" class="login-error" hidden></p>
       <button id="login-submit" class="primary-button" type="submit">
-        Acceder al laboratorio
+        Iniciar sesión
       </button>
     </form>
 
-    <button id="login-back" class="link-button" type="button">← Volver a la portada</button>
+    <div class="login-links"><a class="link-button" href="/">← Volver</a><a class="link-button" href="/recuperar">Olvidé mi contraseña</a></div>
   </div>
 </section>

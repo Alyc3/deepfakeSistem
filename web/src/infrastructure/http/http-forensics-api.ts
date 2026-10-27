@@ -1,125 +1,47 @@
-/**
- * Adaptador de salida — API pericial sobre HTTP (`fetch`).
- *
- * Es el único archivo del frontend que sabe que el backend habla HTTP y que
- * el material viaja como `multipart/form-data`. El backend permite CORS
- * abierto (backend/app/main.py), así que la petición sale directamente del
- * navegador del perito: el material no pasa por ningún intermediario.
- */
-import type { AnalysisResult } from "@domain/analysis";
-import type { EvidenceFile } from "@domain/evidence";
+/** Adaptador de la API del laboratorio; nunca recibe credenciales del almacén. */
+import type { AnalysisResult, ArchiveReceipt } from "@domain/analysis";
+import type { ForensicsApiPort, AnalysisOutcome, BackendStatus } from "@application/ports/forensics-api.port";
 import { normalizeBaseUrl } from "@domain/settings";
-import type {
-  AnalysisOutcome,
-  BackendStatus,
-  ForensicsApiPort,
-} from "@application/ports/forensics-api.port";
-
-/** El análisis de video con cuatro peritos puede tardar minutos en CPU. */
-const PREDICT_TIMEOUT_MS = 180_000;
-const HEALTH_TIMEOUT_MS = 5_000;
-
-/** Proveedor de la URL base: se relee en cada llamada por si el perito la cambió. */
 export type BaseUrlProvider = () => string;
-
-export function createHttpForensicsApi(
-  baseUrl: BaseUrlProvider,
-): ForensicsApiPort {
+async function failure(response: Response): Promise<string> {
+  if (response.status === 401) window.dispatchEvent(new Event("certiface:session-expired"));
+  const body = await response.json().catch(() => ({}));
+  return typeof body.detail === "string" ? body.detail : "No se pudo completar la operación.";
+}
+export function createHttpForensicsApi(baseUrl: BaseUrlProvider, authenticated: () => boolean): ForensicsApiPort {
   const endpoint = () => normalizeBaseUrl(baseUrl());
-
   return {
-    /**
-     * Comprueba el endpoint de salud del backend (GET /).
-     * Un despliegue remoto puede estar dormido por inactividad, así que un
-     * tiempo de espera agotado no significa siempre que esté caído.
-     */
     async status(): Promise<BackendStatus> {
       const base = endpoint();
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
       try {
-        const response = await fetch(`${base}/`, { signal: controller.signal });
-        if (!response.ok) {
-          return { online: false, endpoint: base, error: `HTTP ${response.status}` };
-        }
-        const data = await response.json();
-        return { online: data?.status === "ok", endpoint: base };
-      } catch (err) {
-        const error = err as Error;
-        return {
-          online: false,
-          endpoint: base,
-          error: error.name === "AbortError" ? "timeout" : error.message,
-        };
-      } finally {
-        clearTimeout(timer);
-      }
+        const response = await fetch(`${base}/health`, { credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(5000) });
+        return { online: response.ok && (await response.json()).status === "ok", endpoint: base };
+      } catch { return { online: false, endpoint: base }; }
     },
-
-    /** Envía el material a POST /predict y devuelve el dictamen. */
-    async analyze(file: EvidenceFile): Promise<AnalysisOutcome> {
-      const base = endpoint();
-      console.log(
-        `[CertiFace] Enviando ${file.kind} "${file.name}" ` +
-          `(${file.mime}, ${(file.size / 1024).toFixed(0)} KB) a ${base}/predict`,
-      );
-
-      // El nombre y el tipo se fijan a mano: el navegador deja `type` vacío en
-      // varios contenedores de video y el backend elige la ruta de análisis
-      // justamente por ese campo.
-      const form = new FormData();
-      form.append("file", new Blob([file.blob], { type: file.mime }), file.name);
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), PREDICT_TIMEOUT_MS);
-      const started = performance.now();
-
+    async analyze(file): Promise<AnalysisOutcome> {
+      if (!authenticated()) return { ok: false, error: "Debes iniciar sesión." };
+      const body = new FormData(); body.append("file", new Blob([file.blob], { type: file.mime }), file.name);
       try {
-        const response = await fetch(`${base}/predict`, {
-          method: "POST",
-          body: form,
-          signal: controller.signal,
+        if (file.expectedSha256) {
+          body.append("expected_sha256", file.expectedSha256);
+        } else if (globalThis.crypto?.subtle) {
+          const digest = await crypto.subtle.digest("SHA-256", await file.blob.arrayBuffer());
+          body.append("expected_sha256", [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join(""));
+        }
+        const response = await fetch(`${endpoint()}/predict`, { method: "POST", credentials: "same-origin", body, signal: AbortSignal.timeout(240_000) });
+        if (!response.ok) return { ok: false, error: await failure(response) };
+        return { ok: true, result: await response.json() as AnalysisResult };
+      } catch { return { ok: false, error: "El análisis no se confirmó. Revisa el expediente antes de reintentar." }; }
+    },
+    async finalizeReport(archive: ArchiveReceipt, conclusions: string) {
+      try {
+        const response = await fetch(`${endpoint()}/cases/${encodeURIComponent(archive.case_id)}/reports/${encodeURIComponent(archive.report_id!)}/finalize`, {
+          method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ expert_conclusions: conclusions }), signal: AbortSignal.timeout(120_000),
         });
-
-        const elapsed = ((performance.now() - started) / 1000).toFixed(1);
-
-        if (!response.ok) {
-          const body = await response.text().catch(() => "");
-          console.error(`[CertiFace] HTTP ${response.status} en ${elapsed}s: ${body}`);
-          // Los errores 4xx del backend traen un "detail" con la causa concreta.
-          let detail = "";
-          try {
-            detail = JSON.parse(body)?.detail ?? "";
-          } catch {
-            /* cuerpo no JSON: se usa el mensaje genérico */
-          }
-          return {
-            ok: false,
-            error:
-              detail ||
-              `El servidor devolvió un error (HTTP ${response.status}). Intenta de nuevo.`,
-          };
-        }
-
-        const result = (await response.json()) as AnalysisResult;
-        console.log(`[CertiFace] Respuesta en ${elapsed}s:`, result);
-        return { ok: true, result };
-      } catch (err) {
-        const error = err as Error;
-        if (error.name === "AbortError") {
-          console.error(
-            `[CertiFace] Análisis cancelado por tiempo (${PREDICT_TIMEOUT_MS / 1000}s)`,
-          );
-          return { ok: false, error: "El análisis tardó demasiado y se canceló." };
-        }
-        console.error(`[CertiFace] Fallo de conexión: ${error.message}`);
-        return {
-          ok: false,
-          error: `No se pudo conectar con el backend en ${base}. ¿Está en marcha?`,
-        };
-      } finally {
-        clearTimeout(timer);
-      }
+        if (!response.ok) return { ok: false as const, error: await failure(response) };
+        return { ok: true as const, archive: await response.json() as ArchiveReceipt };
+      } catch { return { ok: false as const, error: "No se confirmó la revisión del reporte." }; }
     },
   };
 }

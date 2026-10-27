@@ -1,0 +1,6 @@
+---
+import BaseLayout from "@ui/layouts/BaseLayout.astro";
+const unavailable = Number(Astro.url.searchParams.get("reason")) >= 500;
+Astro.response.status = unavailable ? 503 : 403;
+---
+<BaseLayout title="Acceso · CertiFace" description="Estado de acceso"><main class="access-page"><span class="brand-mark"></span><p class="eyebrow">CertiFace</p><h1>{unavailable ? "Conexión interrumpida" : "Acceso restringido"}</h1><p>{unavailable ? "No pudimos verificar tu sesión. Intenta de nuevo en unos momentos." : "Tu rol no tiene acceso a esta sección."}</p><a href="/app" class="primary-button">Volver a mi espacio</a><a href="/login" class="link-button">Iniciar sesión</a></main></BaseLayout>

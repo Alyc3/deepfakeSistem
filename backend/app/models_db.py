@@ -136,3 +136,25 @@ class TimecodeInconsistency(Base):
     demonstrative_plate_uri = Column(Text, nullable=True)
 
     report = relationship("AnalysisReport", back_populates="inconsistencies")
+
+
+class StoredArtifact(Base):
+    """Índice append-only de objetos cifrados. No existen operaciones UPDATE/DELETE."""
+    __tablename__ = "stored_artifacts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    case_id = Column(UUID(as_uuid=True), ForeignKey("forensic_cases.id"), nullable=False, index=True)
+    evidence_id = Column(UUID(as_uuid=True), ForeignKey("evidences.id"), nullable=False, index=True)
+    report_id = Column(UUID(as_uuid=True), ForeignKey("analysis_reports.id"), nullable=True, index=True)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey("peritos.id"), nullable=False, index=True)
+    kind = Column(String(30), nullable=False)
+    storage_uri = Column(Text, nullable=False, unique=True)
+    sha256 = Column(String(64), nullable=False)
+    size_bytes = Column(BigInteger, nullable=False)
+    content_type = Column(String(100), nullable=False)
+    manifest_uri = Column(Text, nullable=False)
+    manifest_sha256 = Column(String(64), nullable=False)
+    manifest_size_bytes = Column(BigInteger, nullable=False)
+    signing_key_id = Column(String(64), nullable=False)
+    retention = Column(JSONB, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)

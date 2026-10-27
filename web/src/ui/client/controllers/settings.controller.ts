@@ -14,11 +14,11 @@ function setStatus(status: StatusState, text: string): void {
 }
 
 export function setBackendOnline(): void {
-  setStatus("online", `Backend en línea · ${state.settings.apiUrl}`);
+  setStatus("online", "Motor disponible");
 }
 
 export function setBackendOffline(): void {
-  setStatus("offline", "Backend fuera de línea — clic para reintentar");
+  setStatus("offline", "Motor no disponible");
 }
 
 export async function refreshHealth(): Promise<void> {

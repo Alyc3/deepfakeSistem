@@ -1,0 +1,25 @@
+---
+import Icon from "./Icon.astro";
+import { SECTIONS, type AccessPolicy } from "@domain/access";
+interface Props { policy: AccessPolicy; }
+const { policy } = Astro.props;
+---
+<section aria-label="Gestión de roles">
+  <div class="page-heading"><div><p class="eyebrow">Administración</p><h1>Roles y accesos</h1><p class="page-description">Cada responsabilidad, en su lugar.</p></div><button id="role-create" class="primary-button button-icon" type="button"><Icon name="plus" size={18} />Nuevo rol</button></div>
+  <div class="section-tabs" role="tablist" aria-label="Vista de roles"><button role="tab" id="tab-roles" aria-selected="true" aria-controls="roles-list-panel" tabindex="0">Roles</button><button role="tab" id="tab-permissions" aria-selected="false" aria-controls="permissions-panel" tabindex="-1">Accesos</button></div>
+  <div id="roles-list-panel" role="tabpanel" aria-labelledby="tab-roles">
+    <div class="roles-toolbar"><label class="search-field"><Icon name="search" size={18} /><input id="role-search" type="search" placeholder="Buscar un rol" aria-label="Buscar roles" /></label><button id="identity-refresh" class="icon-button" type="button" aria-label="Actualizar roles"><Icon name="refresh" size={18} /></button></div>
+    <p id="identity-message" class="inline-message" role="status" aria-live="polite">Cargando roles…</p>
+    <div id="identity-roles" class="role-grid"></div>
+    <div id="identity-empty" class="empty-state" hidden><Icon name="shield" size={32} /><h3>Sin resultados</h3><p>Prueba con otro nombre.</p></div>
+  </div>
+  <div id="permissions-panel" class="surface" role="tabpanel" aria-labelledby="tab-permissions" hidden>
+    <div class="surface-heading"><h2>Accesos de CertiFace</h2><span class="badge badge-muted">Solo lectura</span></div>
+    <div class="table-scroll"><table class="data-table permission-table"><thead><tr><th>Rol del servicio</th>{SECTIONS.map((section) => <th>{section.label}</th>)}</tr></thead><tbody>{Object.entries(policy).map(([name, permissions]) => <tr><td>{name}</td>{SECTIONS.map((section) => <td><span class:list={["permission-mark", { granted: permissions.includes(section.permission) }]} aria-label={permissions.includes(section.permission) ? "Permitido" : "Sin acceso"}>{permissions.includes(section.permission) ? "✓" : "—"}</span></td>)}</tr>)}</tbody></table></div>
+  </div>
+</section>
+<dialog id="role-dialog" class="sheet-dialog sheet-dialog--small" aria-labelledby="role-form-title">
+  <div class="sheet-header"><div><p class="eyebrow">Accesos</p><h2 id="role-form-title">Nuevo rol</h2></div><button class="icon-button" type="button" data-close="role-dialog" aria-label="Cerrar"><Icon name="close" /></button></div>
+  <form id="identity-role-form" class="sheet-form"><input type="hidden" name="id" /><label class="field"><span>Nombre del rol</span><input class="text-input" name="name" required maxlength="100" /></label><label class="field"><span>Descripción</span><textarea class="text-input" name="description" rows="4"></textarea></label><p id="role-form-message" class="form-error" role="alert" hidden></p><div class="sheet-actions"><button class="ghost-button" type="button" data-close="role-dialog">Cancelar</button><button class="primary-button" type="submit">Guardar rol</button></div></form>
+</dialog>
+<dialog id="delete-role-dialog" class="confirm-dialog" aria-labelledby="delete-role-title"><Icon name="shield" size={30} /><h2 id="delete-role-title">Eliminar rol</h2><p id="delete-role-description"></p><p id="delete-role-message" class="form-error" role="alert" hidden></p><div class="sheet-actions"><button class="ghost-button" type="button" data-close="delete-role-dialog">Cancelar</button><button id="delete-role-confirm" class="primary-button" type="button">Eliminar rol</button></div></dialog>

@@ -1,0 +1,28 @@
+---
+import Icon from "./Icon.astro";
+---
+<section aria-label="Gestión de usuarios">
+  <div class="page-heading"><div><p class="eyebrow">Administración</p><h1>Usuarios</h1><p class="page-description">Un equipo. Los accesos correctos.</p></div><button id="user-create" class="primary-button button-icon" type="button"><Icon name="plus" size={18} />Nuevo usuario</button></div>
+  <div class="metric-row"><div><span class="metric-label">Usuarios</span><strong id="user-count">—</strong></div><div><span class="metric-label">Activos</span><strong id="user-active-count">—</strong></div><div><span class="metric-label">Roles asignados</span><strong id="user-role-count">—</strong></div></div>
+  <div class="surface">
+    <div class="table-toolbar"><label class="search-field"><Icon name="search" size={18} /><input id="user-search" type="search" placeholder="Buscar nombre o correo" aria-label="Buscar usuarios" /></label><select id="user-role-filter" class="compact-select" aria-label="Filtrar por rol"><option value="">Todos los roles</option></select><button id="identity-refresh" class="icon-button" type="button" aria-label="Actualizar usuarios"><Icon name="refresh" size={18} /></button></div>
+    <p id="identity-message" class="inline-message" role="status" aria-live="polite">Cargando usuarios…</p>
+    <div class="table-scroll"><table class="data-table"><thead><tr><th>Usuario</th><th>Rol</th><th>Estado</th><th>Identificación</th><th><span class="visually-hidden">Acciones</span></th></tr></thead><tbody id="identity-users"></tbody></table></div>
+    <div id="identity-empty" class="empty-state" hidden><Icon name="users" size={32} /><h3>Sin resultados</h3><p>Prueba con otro nombre o filtro.</p></div>
+    <div class="table-footer"><span id="user-visible-count"></span><span>Servicio de usuarios</span></div>
+  </div>
+</section>
+<dialog id="user-dialog" class="sheet-dialog" aria-labelledby="user-form-title">
+  <div class="sheet-header"><div><p class="eyebrow">Equipo</p><h2 id="user-form-title">Nuevo usuario</h2></div><button class="icon-button" type="button" data-close="user-dialog" aria-label="Cerrar"><Icon name="close" /></button></div>
+  <form id="identity-user-form" class="sheet-form">
+    <input type="hidden" name="id" />
+    <div class="form-grid"><label class="field"><span>Nombre</span><input class="text-input" name="first_name" autocomplete="given-name" /></label><label class="field"><span>Apellido</span><input class="text-input" name="last_name" autocomplete="family-name" /></label></div>
+    <label class="field"><span>Correo electrónico</span><input class="text-input" name="email" type="email" required autocomplete="off" /></label>
+    <label class="field"><span>Contraseña <small id="password-optional"></small></span><input class="text-input" name="password" type="password" autocomplete="new-password" required maxlength="1024" /></label>
+    <div class="form-grid"><label class="field"><span>Rol</span><select class="text-input" name="role_name" required></select></label><label class="field"><span>Estado</span><select class="text-input" name="status" required></select></label></div>
+    <label class="field"><span>Identificación</span><input class="text-input" name="identifier" /></label>
+    <label class="field"><span>Teléfono</span><input class="text-input" name="phone_number" type="tel" autocomplete="tel" /></label>
+    <p id="user-form-message" class="form-error" role="alert" hidden></p>
+    <div class="sheet-actions"><button class="ghost-button" type="button" data-close="user-dialog">Cancelar</button><button class="primary-button" type="submit">Guardar usuario</button></div>
+  </form>
+</dialog>

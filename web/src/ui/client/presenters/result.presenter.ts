@@ -1,7 +1,7 @@
 /**
  * Interfaz — Dictamen preliminar.
  */
-import type { AnalysisResult } from "@domain/analysis";
+import type { AnalysisResult, ArchiveReceipt } from "@domain/analysis";
 import { lacksFace } from "@domain/analysis";
 import { signalLegend, verdictOf, type Prediction } from "@domain/verdict";
 import { shortDigest } from "@domain/integrity";
@@ -25,6 +25,22 @@ function renderIntegrityWarning(): void {
     `recepción (${shortDigest(check.declared ?? "")}): el material fue alterado ` +
     `tras su recepción. El dictamen se emite sobre ese material alterado.`;
   el.resultIntegrity.hidden = false;
+}
+
+export function renderArchive(archive?: ArchiveReceipt): void {
+  const panel = document.getElementById("result-archive");
+  if (!panel) return;
+  panel.hidden = !archive;
+  const links = document.getElementById("archive-downloads")!; links.replaceChildren();
+  if (!archive) return;
+  document.getElementById("archive-state")!.textContent = archive.retention_verified ? "Archivo preservado · firma e integridad verificadas" : "Archivo de desarrollo · sin retención verificada";
+  for (const [kind, label] of [["original", "Original"], ["report", "Reporte JSON"], ["manifest", "Manifiesto firmado"]]) {
+    const object = archive.objects.find((item) => item.kind === kind);
+    if (!object) continue;
+    const link = document.createElement("a"); link.className = "ghost-button ghost-button--sm"; link.textContent = label;
+    link.href = `/api/forensics/cases/${encodeURIComponent(archive.case_id)}/artifacts/${encodeURIComponent(object.id)}/download`;
+    link.setAttribute("download", ""); links.append(link);
+  }
 }
 
 export function renderResult(result: AnalysisResult): void {
@@ -74,6 +90,7 @@ export function renderResult(result: AnalysisResult): void {
   }
 
   renderIntegrityWarning();
+  renderArchive(result.archive);
 
   // Sin rostro detectable el dictamen pierde base metodológica: avisar.
   if (lacksFace(result)) {
@@ -100,6 +117,7 @@ export function stampFinalVerdict(
 }
 
 export function clearDictamen(): void {
+  renderArchive();
   el.result.hidden = true;
   el.resultFrames.hidden = true;
   el.resultIntegrity.hidden = true;

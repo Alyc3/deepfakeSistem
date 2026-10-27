@@ -1,28 +1,11 @@
 ---
-/**
- * Adaptador de entrada — la única página del laboratorio.
- *
- * Astro genera aquí el HTML de las tres vistas; el guion del cliente
- * (`@ui/client/main.ts`) las gobierna y habla con los casos de uso.
- */
 import BaseLayout from "@ui/layouts/BaseLayout.astro";
 import LandingView from "@ui/components/LandingView.astro";
-import LoginView from "@ui/components/LoginView.astro";
-import LabView from "@ui/components/LabView.astro";
 ---
-
-<BaseLayout
-  title="CertiFace — Peritaje de Medios Digitales"
-  description="Laboratorio pericial de medios digitales: detección de face swap y deepfake en imágenes y videos para casos de suplantación de identidad."
->
+<BaseLayout title="CertiFace — Peritaje de Medios Digitales" description="Análisis forense de imágenes y videos.">
   <LandingView />
-  <LoginView />
-  <LabView />
-
-  <div id="toast" class="toast" hidden></div>
-
   <script>
-    import { startLab } from "@ui/client/main";
-    startLab();
+    document.querySelectorAll("#landing-enter, #landing-enter-top").forEach((button) => button.addEventListener("click", () => window.location.assign("/login")));
+    document.getElementById("landing-protocol")?.addEventListener("click", () => document.getElementById("protocol")?.scrollIntoView({ behavior: "smooth" }));
   </script>
 </BaseLayout>

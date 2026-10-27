@@ -1,86 +1,17 @@
-/**
- * Casos de uso — Sesión del perito.
- *
- * Registro de primer uso, identificación y cierre de sesión. La política
- * (una credencial por equipo, clave nunca en claro) es del núcleo; el cómo
- * se guarda y con qué algoritmo se deriva, de los adaptadores.
- */
-import {
-  ANONYMOUS_SESSION,
-  validateCredentials,
-  type Credentials,
-  type Session,
-} from "@domain/analyst";
-import type {
-  CredentialRepositoryPort,
-  PasswordHasherPort,
-} from "@application/ports/credential-repository.port";
-
-export type AuthOutcome =
-  | { ok: true; analyst: string }
-  | { ok: false; error: string };
-
-const NO_CRYPTO =
-  "Este navegador no ofrece criptografía segura en la conexión actual. " +
-  "Abre el laboratorio en https:// o en http://localhost.";
-
-interface AuthDeps {
-  credentials: CredentialRepositoryPort;
-  hasher: PasswordHasherPort;
-}
-
-export const sessionStatus =
-  ({ credentials }: AuthDeps) =>
-  (): Session => {
-    const stored = credentials.readCredential();
-    if (!stored) return { ...ANONYMOUS_SESSION };
-    return {
-      registered: true,
-      loggedIn: credentials.readSessionOpen(),
-      analyst: stored.user,
-    };
-  };
-
-export const registerAnalyst =
-  ({ credentials, hasher }: AuthDeps) =>
-  async ({ user, pass }: Credentials): Promise<AuthOutcome> => {
-    const invalid = validateCredentials({ user, pass });
-    if (invalid) return { ok: false, error: invalid };
-    if (!hasher.available()) return { ok: false, error: NO_CRYPTO };
-
-    if (credentials.readCredential()) {
-      return { ok: false, error: "Ya existe un perfil registrado en este equipo." };
-    }
-
-    const salt = hasher.randomSalt();
-    const hash = await hasher.hash(pass, salt);
-    const analyst = user.trim();
-    credentials.saveCredential({ user: analyst, salt, hash });
-    credentials.saveSessionOpen(true);
-    return { ok: true, analyst };
-  };
-
-export const loginAnalyst =
-  ({ credentials, hasher }: AuthDeps) =>
-  async ({ user, pass }: Credentials): Promise<AuthOutcome> => {
-    const stored = credentials.readCredential();
-    if (!stored) {
-      return { ok: false, error: "No hay ningún perfil registrado todavía." };
-    }
-    if (!hasher.available()) return { ok: false, error: NO_CRYPTO };
-
-    const passOk = await hasher.matches(String(pass ?? ""), stored);
-    const userOk = String(user ?? "").trim() === stored.user;
-    if (!passOk || !userOk) {
-      return { ok: false, error: "Credencial o clave incorrectas." };
-    }
-
-    credentials.saveSessionOpen(true);
-    return { ok: true, analyst: stored.user };
-  };
-
-export const logoutAnalyst =
-  ({ credentials }: AuthDeps) =>
-  (): void => {
-    credentials.saveSessionOpen(false);
-  };
+import { ANONYMOUS_SESSION, type Credentials, type Session } from "@domain/analyst";
+import type { IdentityPort } from "@application/ports/identity.port";
+export const sessionStatus = (identity: IdentityPort) => (): Session => {
+  const user = identity.current();
+  return user ? { registered: true, loggedIn: true,
+    analyst: [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email,
+  } : { ...ANONYMOUS_SESSION };
+};
+export const loginAnalyst = (identity: IdentityPort) => async ({ user, pass }: Credentials) => {
+  try {
+    await identity.login(user.trim(), pass);
+    return { ok: true as const, analyst: sessionStatus(identity)().analyst! };
+  } catch (error) {
+    return { ok: false as const, error: error instanceof Error ? error.message : "No se pudo iniciar sesión." };
+  }
+};
+export const logoutAnalyst = (identity: IdentityPort) => () => identity.logout();

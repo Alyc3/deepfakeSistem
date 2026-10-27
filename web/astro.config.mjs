@@ -1,18 +1,19 @@
 // @ts-check
-import { defineConfig } from "astro/config";
-
-// Sitio estático: `astro build` produce HTML + JS que cualquier servidor web
-// sirve tal cual. Toda la lógica vive en el navegador y habla con la API de
-// CertiFace (FastAPI) por HTTP, así que el frontend no necesita servidor
-// propio ni proceso de Node en producción.
+import { defineConfig, sessionDrivers } from "astro/config";
+import node from "@astrojs/node";
+import { loadEnv } from "vite";
+const env = loadEnv(process.env.NODE_ENV ?? "development", process.cwd(), "");
+const production = process.env.NODE_ENV === "production";
 export default defineConfig({
-  server: {
-    port: 4321,
-    // Con --host expuesto el laboratorio es accesible desde otros equipos de
-    // la red (tabletas, portátiles del perito) sin cambiar nada más.
-    host: true,
+  output: "server",
+  adapter: node({ mode: "standalone" }),
+  session: {
+    driver: sessionDrivers.fs({ base: "./.sessions" }),
+    ttl: Math.max(300, Number(env.SESSION_TTL_SECONDS || 14400)),
+    cookie: { name: production ? "__Host-certiface" : "certiface-session", secure: production || env.SESSION_COOKIE_SECURE === "true", sameSite: "lax", path: "/" },
   },
-  devToolbar: {
-    enabled: false,
-  },
+  security: { checkOrigin: true, csp: { directives: ["default-src 'self'", "img-src 'self' data: blob:", "media-src 'self' blob:", "font-src 'self'", "connect-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'"], styleDirective: { resources: ["'self'", "'unsafe-inline'"] } } },
+  markdown: { syntaxHighlight: false },
+  server: { port: 4321, host: true },
+  devToolbar: { enabled: false },
 });

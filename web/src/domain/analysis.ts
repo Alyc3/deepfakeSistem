@@ -57,6 +57,7 @@ export interface Explanation {
 }
 
 export interface AnalysisResult {
+  archive?: ArchiveReceipt;
   prediction: Prediction;
   confidence: number;
   faces_detected: number;
@@ -67,6 +68,14 @@ export interface AnalysisResult {
   frames_analyzed?: number;
   frame_scores?: number[];
   suspicious_seconds?: SuspiciousSecond[];
+}
+
+export interface ArchiveReceipt {
+  case_id: string;
+  evidence_id: string;
+  report_id: string | null;
+  retention_verified: boolean;
+  objects: { id: string; kind: string; sha256: string; size_bytes: number }[];
 }
 
 /** El material era un video (y no una imagen suelta). */

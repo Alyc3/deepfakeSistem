@@ -11,7 +11,7 @@ import { state } from "../state";
 import { lab } from "../lab";
 import { addLog } from "../analysis-log";
 import { showToast } from "../toast";
-import { stampFinalVerdict } from "./result.presenter";
+import { stampFinalVerdict, renderArchive } from "./result.presenter";
 import { renderHistory } from "./history.presenter";
 
 const OPTIONS: ChecklistAnswer[] = ["si", "no", "nc"];
@@ -62,7 +62,7 @@ export function updateChecklistScore(): void {
   el.checklistSubmit.disabled = !scores.complete;
 }
 
-export function emitFinalVerdict(): void {
+export async function emitFinalVerdict(): Promise<void> {
   const result = state.lastResult;
   if (!result) return;
 
@@ -80,6 +80,13 @@ export function emitFinalVerdict(): void {
   }
 
   const final = resolution.prediction;
+  if (!result.archive?.report_id) { showToast("No hay un reporte archivado para emitir la revisión."); return; }
+  el.checklistSubmit.disabled = true;
+  const conclusions = JSON.stringify({ source: "manual-checklist", prediction: final, model_confidence: result.confidence, scores: resolution.scores, answers: state.checklistAnswers });
+  const saved = await lab().finalizeReport(result.archive, conclusions);
+  if (!saved.ok) { showToast(saved.error); el.checklistSubmit.disabled = false; return; }
+  result.archive = { ...saved.archive, objects: [...saved.archive.objects, ...result.archive.objects.filter((object) => object.kind === "original")] };
+  renderArchive(result.archive);
   stampFinalVerdict(
     final,
     result.confidence,

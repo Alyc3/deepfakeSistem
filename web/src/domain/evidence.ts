@@ -43,6 +43,7 @@ export type EvidenceKind = "image" | "video";
 
 /** Material admitido, listo para la vista previa y para el análisis. */
 export interface EvidenceFile {
+  expectedSha256?: string;
   name: string;
   size: number;
   mime: string;

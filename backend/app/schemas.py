@@ -50,10 +50,10 @@ class AuditEventSchema(BaseModel):
 
 
 class CaseCreateSchema(BaseModel):
-    case_number: str
-    title: str
-    description: Optional[str] = None
+    case_number: str = Field(min_length=1, max_length=100)
+    title: str = Field(min_length=1, max_length=255)
+    description: Optional[str] = Field(default=None, max_length=10000)
 
 
 class FinalizeReportSchema(BaseModel):
-    expert_conclusions: str
+    expert_conclusions: str = Field(min_length=1, max_length=20000)

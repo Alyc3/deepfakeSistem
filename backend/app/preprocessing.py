@@ -63,6 +63,7 @@ def extract_frames(video_bytes: bytes, max_frames: int = 24):
     de sorprenderlos.
     """
     fd, tmp_path = tempfile.mkstemp(suffix=".mp4", prefix="certiface_")
+    cap = None
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(video_bytes)
@@ -98,7 +99,6 @@ def extract_frames(video_bytes: bytes, max_frames: int = 24):
                     (Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)), timestamp)
                 )
             count += 1
-        cap.release()
 
         if not frames:
             logger.error(
@@ -112,7 +112,9 @@ def extract_frames(video_bytes: bytes, max_frames: int = 24):
             )
         return frames
     finally:
+        if cap is not None:
+            cap.release()
         try:
             os.unlink(tmp_path)
         except OSError:
-            pass
+            logger.warning("No se pudo retirar un temporal privado de trabajo; requiere revisión del operador")

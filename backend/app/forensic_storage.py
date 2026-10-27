@@ -1,92 +1,137 @@
-import hashlib
-import logging
-import os
-import shutil
-from pathlib import Path
-from typing import Tuple
+"""Casos de preservación: originales, copias y reportes cifrados y sellados."""
+import base64
+import copy
+import uuid
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from functools import lru_cache
 
-logger = logging.getLogger("certiface.storage")
+from app.storage.adapters import LocalObjectStore, S3ObjectStore
+from app.storage.config import StorageConfig
+from app.storage.ports import Artifact, IntegrityError, ObjectStore, StorageError
+from app.storage.retention import RetentionGuard
+from app.storage.sealing import Sealer, canonical_json, sha256
 
-BASE_STORAGE = Path(os.getenv("STORAGE_DIR", "storage_evidence")).resolve()
-MASTER_DIR = BASE_STORAGE / "master"
-WORKING_DIR = BASE_STORAGE / "working"
-PLATES_DIR = BASE_STORAGE / "plates"
-REPORTS_DIR = BASE_STORAGE / "reports"
-
-for d in (MASTER_DIR, WORKING_DIR, PLATES_DIR, REPORTS_DIR):
-    d.mkdir(parents=True, exist_ok=True)
-
-
-class ForensicIntegrityError(Exception):
-    """Excepción al detectar disparidad de hash entre el original y la copia de trabajo."""
-    pass
+ForensicIntegrityError = IntegrityError
+calculate_sha256 = sha256
 
 
-def calculate_sha256(data: bytes) -> str:
-    """Calcula la huella criptográfica SHA-256 de un bloque de bytes."""
-    return hashlib.sha256(data).hexdigest()
-
-
-def ingest_evidence(
-    file_bytes: bytes,
-    file_name: str,
-    case_id: str,
-) -> Tuple[str, str, str, str]:
-    """Preservación de evidencia digital conforme a ISO/IEC 27037.
-
-    1. Calcula el hash SHA-256 de la evidencia cruda.
-    2. Guarda la Evidencia Original (Master Copy) con permisos de sólo lectura (0o400).
-    3. Genera la Copia Forense de Trabajo (Working Copy).
-    4. Verifica que el hash de la copia de trabajo sea idéntico al original.
-
-    Devuelve: (sha256_original, sha256_working, original_path, working_path)
-    """
-    case_master_dir = MASTER_DIR / str(case_id)
-    case_working_dir = WORKING_DIR / str(case_id)
-    case_master_dir.mkdir(parents=True, exist_ok=True)
-    case_working_dir.mkdir(parents=True, exist_ok=True)
-
-    original_sha256 = calculate_sha256(file_bytes)
-
-    # 1. Guardar Evidencia Original
-    original_path = case_master_dir / file_name
-    # Si el archivo ya existía con 0o400, restablecer permiso temporal para escribir
-    if original_path.exists():
-        os.chmod(original_path, 0o600)
-    with open(original_path, "wb") as f:
-        f.write(file_bytes)
-    # Marcar inmediatamente como sólo lectura (protección contra escritura)
+def identifier(value) -> str:
     try:
-        os.chmod(original_path, 0o400)
-    except OSError:
-        pass
+        return str(uuid.UUID(str(value)))
+    except (ValueError, TypeError, AttributeError):
+        raise StorageError("Identificador forense inválido") from None
 
-    # 2. Generar Copia Forense de Trabajo
-    working_name = f"work_{file_name}"
-    working_path = case_working_dir / working_name
-    shutil.copyfile(original_path, working_path)
 
-    # 3. Verificar correspondencia criptográfica exacta
-    with open(working_path, "rb") as f:
-        working_bytes = f.read()
-    working_sha256 = calculate_sha256(working_bytes)
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
-    if original_sha256 != working_sha256:
-        logger.critical(
-            "Fallo de integridad forense: SHA256 original (%s) != copia (%s)",
-            original_sha256, working_sha256,
-        )
-        raise ForensicIntegrityError(
-            f"Fallo de integridad en la copia de trabajo para el expediente {case_id}."
-        )
 
-    logger.info(
-        "Evidencia preservada exitosamente [ISO/IEC 27037] - SHA-256: %s",
-        original_sha256,
-    )
-    return (
-        original_sha256,
-        working_sha256,
-        str(original_path),
-        str(working_path),
-    )
+@dataclass(frozen=True)
+class PreservedBundle:
+    artifacts: tuple[Artifact, ...]
+    manifest: Artifact
+    signing_key_id: str
+    retention: dict
+
+
+class ForensicStorage:
+    def __init__(self, config: StorageConfig, store: ObjectStore, sealer: Sealer, retention=None):
+        self.config, self.store, self.sealer = config, store, sealer
+        self.retention = retention or RetentionGuard(config)
+
+    def _write(self, kind: str, key: str, data: bytes, content_type: str) -> Artifact:
+        if len(data) > self.config.max_object:
+            raise StorageError("Objeto demasiado grande para el almacén")
+        digest = sha256(data)
+        uri = self.store.put_once(key, self.sealer.encrypt(data, key))
+        artifact = Artifact(kind, uri, digest, len(data), content_type)
+        self.read(artifact)  # verificación desde los bytes realmente persistidos
+        return artifact
+
+    def read(self, artifact: Artifact) -> bytes:
+        key, encrypted = self.store.read(artifact.uri)
+        data = self.sealer.decrypt(encrypted, key, artifact.sha256)
+        if len(data) != artifact.size:
+            raise IntegrityError("El tamaño de la evidencia no coincide")
+        return data
+
+    def _seal(self, root: str, artifacts: list[Artifact], context: dict, retention: dict) -> PreservedBundle:
+        payload = {"schema": "certiface-custody-v1", "created_at": now(), **context,
+                   "retention": retention, "artifacts": [asdict(artifact) for artifact in artifacts]}
+        signed = self.sealer.sign_manifest(payload)
+        manifest = self._write("manifest", f"{root}/manifests/seal.json.enc", signed, "application/json")
+        self.sealer.verify_manifest(self.read(manifest))
+        return PreservedBundle(tuple(artifacts), manifest, self.sealer.signing_id, retention)
+
+    def verify(self, artifact: Artifact, manifest: Artifact, case_id: str, evidence_id: str, owner_id: str, report_id: str | None = None) -> dict:
+        payload = self.sealer.verify_manifest(self.read(manifest))
+        expected = {"case_id": identifier(case_id), "evidence_id": identifier(evidence_id), "owner_id": str(owner_id)}
+        if report_id is not None:
+            expected["report_id"] = identifier(report_id)
+        if any(payload.get(key) != value for key, value in expected.items()):
+            raise IntegrityError("El manifiesto no corresponde al expediente y propietario")
+        if artifact != manifest and asdict(artifact) not in payload.get("artifacts", []):
+            raise IntegrityError("El objeto no forma parte del manifiesto firmado")
+        return payload
+
+    def ingest(self, data: bytes, file_name: str, content_type: str, case_id: str, evidence_id: str, owner_id: str, actor_id: str) -> PreservedBundle:
+        if not data or len(data) > self.config.max_upload:
+            raise StorageError("El archivo está vacío o supera el límite de ingesta")
+        retention = self.retention.check()  # antes de cualquier escritura
+        case_id, evidence_id = identifier(case_id), identifier(evidence_id)
+        root = f"{self.config.prefix}/cases/{case_id}/evidence/{evidence_id}"
+        digest = sha256(data)
+        original = self._write("original", f"{root}/original/evidence.bin.enc", data, content_type)
+        recovered = self.read(original)
+        working = self._write("working", f"{root}/working/copy.bin.enc", recovered, content_type)
+        if original.sha256 != working.sha256:
+            raise IntegrityError("La copia de trabajo no coincide con el original")
+        return self._seal(root, [original, working], {"event": "EVIDENCE_PRESERVED", "case_id": case_id,
+            "evidence_id": evidence_id, "owner_id": str(owner_id), "actor_id": str(actor_id),
+            "received_filename": str(file_name)[:255]}, retention)
+
+    def archive_report(self, result: dict, case_id: str, evidence_id: str, report_id: str, owner_id: str, actor_id: str,
+                       evidence_manifest: Artifact, evidence_original: Artifact, provenance: dict, previous: dict | None = None) -> PreservedBundle:
+        retention = self.retention.check()
+        case_id, evidence_id, report_id = identifier(case_id), identifier(evidence_id), identifier(report_id)
+        self.verify(evidence_original, evidence_manifest, case_id, evidence_id, owner_id)
+        revision_id = str(uuid.uuid4())
+        root = f"{self.config.prefix}/cases/{case_id}/evidence/{evidence_id}/reports/{report_id}/{revision_id}"
+        archived = copy.deepcopy(result)
+        artifacts = []
+        explanation = archived.get("explanation")
+        if isinstance(explanation, dict):
+            images = [explanation, *explanation.get("frames", [])]
+            for index, item in enumerate(images):
+                value = item.pop("image", None)
+                if value is None:
+                    continue
+                if not isinstance(value, str) or not value.startswith("data:image/jpeg;base64,"):
+                    raise IntegrityError("Formato inesperado de lámina explicativa")
+                try:
+                    image = base64.b64decode(value.split(",", 1)[1], validate=True)
+                except ValueError:
+                    raise IntegrityError("Lámina explicativa inválida") from None
+                if not image.startswith(b"\xff\xd8\xff"):
+                    raise IntegrityError("La lámina no es un JPEG")
+                plate = self._write("plate", f"{root}/plates/{index:03d}.jpg.enc", image, "image/jpeg")
+                item["artifact"] = asdict(plate)
+                artifacts.append(plate)
+        document = {"schema": "certiface-report-v1", "report_id": report_id, "revision_id": revision_id,
+            "case_id": case_id, "evidence_id": evidence_id, "owner_id": str(owner_id), "actor_id": str(actor_id),
+            "created_at": now(), "original_sha256": evidence_original.sha256, "evidence_manifest": asdict(evidence_manifest),
+            "provenance": provenance, "previous_revision": previous, "result": archived}
+        encoded = canonical_json(document)
+        report = self._write("report", f"{root}/report.json.enc", encoded, "application/json")
+        artifacts.append(report)
+        return self._seal(root, artifacts, {"event": "REPORT_ARCHIVED", "case_id": case_id, "evidence_id": evidence_id,
+            "report_id": report_id, "revision_id": revision_id, "owner_id": str(owner_id), "actor_id": str(actor_id),
+            "original_sha256": evidence_original.sha256, "evidence_manifest": asdict(evidence_manifest), "previous_revision": previous}, retention)
+
+
+@lru_cache(maxsize=1)
+def get_storage() -> ForensicStorage:
+    config = StorageConfig.from_env()
+    store = LocalObjectStore(config) if config.local else S3ObjectStore(config)
+    return ForensicStorage(config, store, Sealer.from_env())
