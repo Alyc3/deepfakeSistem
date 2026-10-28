@@ -11,8 +11,14 @@ function env(key: string): string {
   return process.env[key] ?? buildEnvironment[key] ?? "";
 }
 function serviceUrl(key: string): string {
-  const value = env(key);
-  const parsed = new URL(value);
+  const value = env(key).trim();
+  if (!value) throw new Error(`Falta ${key}. Configura web/.env a partir de web/.env.example y reinicia Astro.`);
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`Configuración inválida: ${key} debe ser una URL absoluta con http:// o https://.`);
+  }
   if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error(`Configuración inválida: ${key}`);
   if (import.meta.env.PROD && parsed.protocol !== "https:" && !["localhost", "127.0.0.1", "::1"].includes(parsed.hostname)) throw new Error(`${key} requiere HTTPS`);
   return value.replace(/\/+$/, "");
@@ -21,7 +27,7 @@ export function serverConfig() {
   return {
     authUrl: serviceUrl("AUTH_SERVICE_URL"),
     apiUrl: serviceUrl("CERTIFACE_API_URL"),
-    origin: new URL(env("APP_ORIGIN")).origin,
+    origin: new URL(serviceUrl("APP_ORIGIN")).origin,
     policy: JSON.parse(env("ROLE_PERMISSIONS") || "{}") as AccessPolicy,
     fallback: JSON.parse(env("DEFAULT_PERMISSIONS") || "[]") as Permission[],
   };

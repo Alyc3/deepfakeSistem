@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import HTTPException, UploadFile
 
 from app.forensic_storage import PreservedBundle, get_storage
+from app.report_pdf import build_forensic_pdf
 from app.models_db import AnalysisReport, Evidence, ForensicCase, StoredArtifact, TimecodeInconsistency
 from app.storage.config import BACKEND, StorageConfig
 from app.storage.ports import Artifact, IntegrityError
@@ -147,13 +148,26 @@ def analyze_and_archive(db, case, evidence, perito):
         verdict = "SIN_MANIPULACION"
     report_id = uuid.uuid4()
     result.update(report_id=str(report_id), verdict_forensic=verdict, processing_time_seconds=processing_time)
+    pdf_bytes = build_forensic_pdf(case=case, evidence=evidence, report_id=str(report_id), result=result,
+                                   original_sha256=original.sha256, working_sha256=evidence.sha256_working_copy)
     bundle = storage.archive_report(result, str(case.id), str(evidence.id), str(report_id), str(perito.id), perito.external_auth_id,
-        evidence_manifest, original, provenance())
-    report = AnalysisReport(id=report_id, evidence_id=evidence.id, perito_id=perito.id, status="COMPLETED", verdict=verdict,
-        confidence_score=result.get("confidence"), caveat_notes=result.get("caveat"), processing_time_seconds=processing_time,
-        hardware_info="PyTorch", frames_analyzed=result.get("frames_analyzed", 1), faces_detected=result.get("faces_detected", 0),
-        models_metadata=result.get("models", {}), completed_at=datetime.now(timezone.utc))
+        evidence_manifest, original, provenance(), pdf_bytes=pdf_bytes)
+    report = AnalysisReport(id=report_id, evidence_id=evidence.id, perito_id=perito.id)
     db.add(report)
+    report.status = "COMPLETED"
+    report.verdict = verdict
+    report.confidence_score = result.get("confidence")
+    report.caveat_notes = result.get("caveat")
+    report.processing_time_seconds = processing_time
+    report.hardware_info = "PyTorch"
+    report.frames_analyzed = result.get("frames_analyzed", 1)
+    report.faces_detected = result.get("faces_detected", 0)
+    report.models_metadata = result.get("models", {})
+    report.completed_at = datetime.now(timezone.utc)
+    pdf_artifact = next((item for item in bundle.artifacts if item.kind == "pdf"), None)
+    if pdf_artifact:
+        report.pdf_report_uri = pdf_artifact.uri
+        report.pdf_sha256 = pdf_artifact.sha256
     rows = add_bundle(db, bundle, case, evidence, perito, report)
     for suspect in result.get("suspicious_seconds", []):
         seconds = float(suspect["second"])

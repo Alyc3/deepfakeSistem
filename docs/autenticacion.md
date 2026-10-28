@@ -2,9 +2,11 @@
 
 ## Ejecución local
 
-1. Backend: `cd backend` y `./start.ps1` (PowerShell). Usa el Python de `.venv`.
-2. Web: `cd web` y `npm run dev`. Abrir `http://localhost:4321`.
-3. Producción: `npm run build` y `npm run serve` desde `web/`, detrás de HTTPS.
+1. Redis: `docker compose -f docker-compose.inference.yml up -d redis`, o iniciar Redis en `127.0.0.1:6379`.
+2. Worker: desde `backend/`, `celery -A app.celery_app.celery_app worker --loglevel=INFO --pool=solo`.
+3. Backend: `cd backend` y `./start.ps1` (PowerShell). Usa el Python de `.venv`.
+4. Web: `cd web` y `npm run dev`. Abrir `http://localhost:4321`.
+5. Producción: `npm run build` y `npm run serve` desde `web/`, detrás de HTTPS.
 
 La aplicación ahora necesita un servidor Node: las rutas protegidas y las
 sesiones se resuelven mediante Astro SSR con el adaptador oficial de Node.
@@ -39,6 +41,10 @@ Backend:
 - `INTERNAL_API_KEY`: clave para escribir auditoría central, solo en servidor.
 - `AUTO_DOWNLOAD_MODELS`: descarga opcional; por defecto el arranque requiere
   los pesos ya preparados con `python scripts/fetch_models.py`.
+- `CELERY_BROKER_URL`: broker Redis para publicar trabajos de inferencia.
+- `CELERY_RESULT_BACKEND`: Redis para conservar el resultado del trabajo hasta
+  su consulta autenticada.
+- `CELERY_RESULT_EXPIRES`: TTL de resultados en segundos.
 
 Reiniciar ambos servicios después de cambiar la política de roles o el entorno.
 La configuración incluye Administrador, Perito e Invitado, y mapea ADMIN y
@@ -91,7 +97,8 @@ APP_ORIGIN antes de publicar.
 
 ## PostgreSQL y arranque
 
-`python -m scripts.init_db` crea las tablas faltantes sin borrar datos. No cambia
+`python -m scripts.init_db` crea las tablas faltantes sin borrar datos, incluida
+`analysis_jobs` para el estado operativo de Celery. No cambia
 columnas existentes: futuras evoluciones requieren migraciones versionadas.
 
 Si la red permite HTTPS a Neon pero bloquea PostgreSQL/TCP, puede inicializarse
@@ -104,7 +111,7 @@ los expedientes siguen requiriendo conectividad TCP/TLS en el puerto 5432.
 - `/docs`: documentación interactiva.
 
 Durante la configuración se verificó la credencial por HTTPS y se crearon las
-seis tablas periciales. La negociación PostgreSQL/TCP agotó el tiempo de espera
+las tablas periciales, incluida `analysis_jobs`. La negociación PostgreSQL/TCP agotó el tiempo de espera
 en este equipo. Revisar la ruta de red, firewall y disponibilidad del endpoint;
 no desactivar SSL ni channel binding como solución.
 

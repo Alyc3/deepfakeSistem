@@ -1,0 +1,313 @@
+# Implementación de custodia forense, informes PDF e inferencia asíncrona
+
+Este documento describe los cambios implementados en CertiFace para preservar
+la evidencia digital, generar informes periciales en PDF y ejecutar la
+inferencia mediante una cola asíncrona con Celery y Redis.
+
+## 1. Alcance de la actualización
+
+La implementación cubre tres necesidades operativas:
+
+1. Conservar la evidencia original sin modificarla y analizar únicamente una
+   copia de trabajo verificada.
+2. Generar un informe PDF con el resultado automático, sus señales, las
+   observaciones temporales y las conclusiones del perito.
+3. Sacar la inferencia pesada del proceso HTTP para que la interfaz reciba una
+   respuesta inmediata y consulte posteriormente el resultado mediante un
+   identificador de trabajo.
+
+Los cambios principales están en:
+
+| Archivo | Responsabilidad |
+|---|---|
+| `backend/app/forensic_storage.py` | Preservación cifrada, manifiestos y artefactos append-only. |
+| `backend/app/forensic_workflow.py` | Verificación de la copia, inferencia, creación del reporte y PDF. |
+| `backend/app/report_pdf.py` | Construcción del informe PDF con ReportLab. |
+| `backend/app/celery_app.py` | Configuración de Celery, Redis y el backend de resultados. |
+| `backend/app/tasks.py` | Trabajo que ejecuta la inferencia en un worker. |
+| `backend/app/models_db.py` | Modelo operativo `AnalysisJob`. |
+| `backend/migrations/0003_analysis_jobs.sql` | Tabla e índices de trabajos asíncronos. |
+| `backend/app/forensic_routes.py` | Endpoints de ingesta, cola, consulta de trabajos y finalización. |
+| `web/src/infrastructure/http/http-forensics-api.ts` | Envío y polling desde la aplicación web. |
+| `web/src/pages/api/forensics/jobs/[job_id].ts` | Pasarela autenticada para consultar trabajos. |
+| `web/src/ui/client/presenters/result.presenter.ts` | Enlace de descarga del informe PDF. |
+
+## 2. Preservación del original y la copia de trabajo
+
+### Flujo de ingesta
+
+Cuando llega un archivo, `read_upload` valida el tipo MIME, el tamaño máximo y
+que el contenido no esté vacío. Después `ForensicStorage.ingest` ejecuta este
+flujo:
+
+```mermaid
+flowchart TD
+    A[Archivo recibido] --> B[SHA-256 de los bytes recibidos]
+    B --> C[Original cifrado y almacenado]
+    C --> D[Lectura y recuperación del original]
+    D --> E[Copia de trabajo cifrada]
+    E --> F[Comparación SHA-256 original/copia]
+    F --> G[Manifiesto Ed25519]
+    G --> H[Registro de evidencia y artefactos]
+    H --> I[Inferencia únicamente sobre la copia]
+```
+
+El nombre proporcionado por el usuario no se utiliza como ruta de almacenamiento.
+Cada evidencia recibe identificadores UUID y se organiza bajo un prefijo del
+expediente:
+
+```text
+certiface/v1/cases/<case_uuid>/evidence/<evidence_uuid>/
+├── original/evidence.bin.enc
+├── working/copy.bin.enc
+└── manifests/seal.json.enc
+```
+
+La evidencia original y la copia tienen el mismo hash SHA-256, pero se guardan
+como objetos cifrados independientes. La copia no se genera desde el nombre del
+archivo ni desde una nueva conversión: se recupera desde el objeto original y
+se vuelve a preservar.
+
+### Cifrado y sellado
+
+La implementación utiliza:
+
+- AES-256-GCM para confidencialidad e integridad autenticada de cada objeto.
+- SHA-256 para identificar los bytes originales, copias, reportes y PDFs.
+- Ed25519 para firmar los manifiestos de custodia.
+- Datos asociados autenticados —AAD— vinculados a la ruta interna del objeto,
+  para impedir que un ciphertext válido se reutilice en otra referencia.
+- Escritura única con `IfNoneMatch="*"` en el adaptador S3/R2.
+- Archivos locales con creación exclusiva y permisos restringidos cuando se usa
+  el modo de desarrollo.
+
+El manifiesto vincula el expediente, la evidencia, el propietario, el actor,
+los hashes, las URI internas, el tamaño y la política de retención. Antes de
+analizar, `verified_working` verifica el manifiesto, comprueba la identidad de
+los objetos y recupera los bytes de la copia de trabajo.
+
+Por tanto, el detector no abre el objeto original para inferencia. El original
+solo se recupera para comprobar correspondencia y custodia.
+
+### Persistencia
+
+PostgreSQL conserva los metadatos de `Evidence`, `StoredArtifact`,
+`AnalysisReport` y `CustodyAuditLog`. El objeto audiovisual y los artefactos no
+se guardan como blobs en PostgreSQL: se almacenan en el adaptador local de
+desarrollo o en un almacén compatible con S3, configurado para Cloudflare R2.
+
+Los triggers de las migraciones existentes protegen evidencias, reportes,
+artefactos y eventos de custodia contra actualización o eliminación. El nuevo
+modelo `AnalysisJob` es diferente: representa estado operativo de una tarea y
+puede cambiar de `QUEUED` a `PROCESSING`, `COMPLETED` o `FAILED` sin alterar el
+registro probatorio.
+
+## 3. Generación del informe PDF
+
+### Librería utilizada
+
+El informe se genera con:
+
+```text
+reportlab>=4.2,<5
+```
+
+La función principal es `build_forensic_pdf` en
+`backend/app/report_pdf.py`. Construye un PDF en memoria mediante
+`BytesIO`, `SimpleDocTemplate`, `Paragraph`, `Table` y estilos de ReportLab.
+No escribe primero el PDF en una carpeta temporal pública.
+
+### Contenido del informe
+
+El PDF incluye:
+
+- Identificación del expediente y título del caso.
+- Nombre y tipo MIME de la evidencia.
+- SHA-256 del original.
+- SHA-256 de la copia de trabajo.
+- Identificador del reporte.
+- Veredicto: `Real`, `Fake` o `Suspect`.
+- Confianza orientativa.
+- Fotogramas procesados y rostros detectados.
+- Tiempo de procesamiento.
+- Señales de cada detector: GAN, face swap, difusión y escena cuando existe.
+- Reserva o advertencia del modelo cuando el resultado es inconcluso.
+- Momentos sospechosos señalados por el detector temporal.
+- Conclusiones y observaciones escritas por el perito.
+
+Las imágenes de los mapas de calor no se incrustan nuevamente en el PDF. Se
+conservan como artefactos JPEG independientes y el reporte JSON mantiene sus
+referencias, hashes y metadatos. Esto evita duplicar innecesariamente la
+evidencia visual dentro del documento.
+
+### Archivo y trazabilidad
+
+`ForensicStorage.archive_report` guarda el PDF como:
+
+```text
+.../reports/<report_uuid>/<revision_uuid>/report.pdf.enc
+```
+
+El PDF se cifra con el mismo mecanismo de AES-256-GCM que el resto de objetos.
+Después se incorpora al manifiesto firmado. La tabla `analysis_reports` registra:
+
+```text
+pdf_report_uri
+pdf_sha256
+```
+
+Las conclusiones manuales no sobrescriben el documento anterior. La ruta de
+finalización genera una nueva revisión JSON/PDF y la enlaza con la revisión
+precedente. Así se conserva la evolución del dictamen.
+
+La implementación actual genera un PDF pericial estructurado; no afirma
+conformidad PDF/A-1b ni firma digital directa del documento. La firma aplicada
+es la del manifiesto Ed25519 que referencia el PDF y su hash.
+
+## 4. Inferencia asíncrona con Celery y Redis
+
+### Componentes
+
+| Componente | Función |
+|---|---|
+| Celery | Cola, ejecución y estados de los trabajos. |
+| Redis DB 0 | Broker de mensajes. |
+| Redis DB 1 | Backend de resultados. |
+| `AnalysisJob` | Estado operativo y relación entre job, evidencia, caso y reporte. |
+| Worker | Proceso separado que carga modelos y ejecuta PyTorch/OpenCV. |
+| Astro BFF | Mantiene la sesión y reenvía las consultas autenticadas. |
+
+La configuración está en `backend/app/celery_app.py`:
+
+```python
+broker_url = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
+result_backend = os.getenv("CELERY_RESULT_BACKEND", broker_url)
+```
+
+También se configuraron serialización JSON, seguimiento de tareas iniciadas,
+TTL de resultados, `acks_late`, rechazo cuando se pierde un worker y
+`worker_prefetch_multiplier=1`. Esto evita que un worker reserve muchos videos
+pesados antes de poder procesarlos.
+
+### Flujo HTTP y polling
+
+```mermaid
+sequenceDiagram
+    participant UI as Navegador
+    participant BFF as Astro BFF
+    participant API as FastAPI
+    participant DB as PostgreSQL
+    participant R as Redis
+    participant W as Celery Worker
+
+    UI->>BFF: POST /api/forensics/predict
+    BFF->>API: POST /predict autenticado
+    API->>API: Preserva original y copia
+    API->>DB: INSERT analysis_jobs QUEUED
+    API->>R: Publica tarea
+    API-->>BFF: 202 job_id
+    BFF-->>UI: 202 job_id
+    UI->>BFF: GET /api/forensics/jobs/{job_id}
+    BFF->>API: GET /api/v1/jobs/{job_id}
+    API-->>UI: QUEUED o PROCESSING
+    R->>W: Entrega tarea
+    W->>DB: Verifica copia de trabajo
+    W->>W: Ejecuta inferencia y genera PDF
+    W->>DB: Inserta reporte y marca job COMPLETED
+    UI->>BFF: Consulta nuevamente
+    BFF-->>UI: COMPLETED + resultado + archive
+```
+
+`POST /predict` ya no mantiene abierta la petición durante toda la inferencia.
+La respuesta inmediata contiene:
+
+```json
+{
+  "status": "queued",
+  "job_id": "uuid",
+  "case_id": "uuid",
+  "evidence_id": "uuid",
+  "poll_after_ms": 2000
+}
+```
+
+El endpoint de estado valida que el trabajo pertenezca al perito autenticado.
+La interfaz consulta cada dos segundos y tiene un límite de quince minutos para
+la espera del resultado.
+
+### Archivos de configuración
+
+En `backend/.env` se deben definir:
+
+```env
+CELERY_BROKER_URL=redis://127.0.0.1:6379/0
+CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/1
+CELERY_RESULT_EXPIRES=86400
+```
+
+Para desarrollo se incluyó `docker-compose.inference.yml`, que inicia Redis 7
+con almacenamiento persistente y expone el puerto únicamente en loopback:
+
+```bash
+docker compose -f docker-compose.inference.yml up -d redis
+```
+
+El worker se inicia desde `backend/`:
+
+```bash
+celery -A app.celery_app.celery_app worker --loglevel=INFO --pool=solo
+```
+
+El pool `solo` es apropiado para una estación local con modelos grandes. En un
+despliegue productivo se deben dimensionar workers según la memoria disponible,
+la VRAM y el número de análisis concurrentes.
+
+## 5. Dependencias añadidas
+
+Las nuevas dependencias directas son:
+
+| Dependencia | Uso |
+|---|---|
+| `celery[redis]>=5.4,<6` | Orquestación de tareas y transporte Redis. |
+| `reportlab>=4.2,<5` | Generación del informe PDF. |
+
+El resto del pipeline continúa utilizando FastAPI, SQLAlchemy, PostgreSQL,
+Boto3, `cryptography`, PyTorch, OpenCV, Pillow, Transformers, timm y PEFT.
+
+## 6. Migración y puesta en marcha
+
+Para una base existente, aplicar la migración de `analysis_jobs`:
+
+```powershell
+cd backend
+python -m scripts.migrate_forensic_storage
+```
+
+La inicialización completa también reconoce el modelo `AnalysisJob` mediante
+`python -m scripts.init_db`.
+
+El orden recomendado es:
+
+1. Instalar `backend/requirements.txt`.
+2. Configurar las variables privadas de PostgreSQL, R2, firma, cifrado y Redis.
+3. Aplicar la migración o inicializar la base.
+4. Iniciar Redis.
+5. Iniciar el worker Celery.
+6. Iniciar FastAPI.
+7. Iniciar Astro SSR.
+
+## 7. Validación realizada
+
+Se comprobó estáticamente la sintaxis de los archivos Python modificados y el
+espacio de trabajo no presenta errores de formato en Git. La ejecución real de
+la inferencia requiere instalar las dependencias Python, disponer de las
+variables privadas y descargar los pesos grandes excluidos de Git.
+
+El diseño mantiene una separación explícita entre:
+
+- Evidencia probatoria inmutable.
+- Estado operativo mutable del worker.
+- Resultado automático del ensamble.
+- Revisión humana posterior.
+- Informe PDF y artefactos derivados.
+
