@@ -29,7 +29,7 @@ Actualmente, el sistema está estructurado como dos subsistemas desacoplados com
 El frontend está implementado con **Astro 7** y **TypeScript**, operando como un laboratorio interactivo en el navegador bajo Clean Architecture:
 - **Dominio (`src/domain/`):** Modelos de dictamen (`verdict.ts`), admisión de evidencia (`evidence.ts`), cálculo de hashes para cadena de custodia (`integrity.ts`) y bandas de riesgo (`risk.ts`).
 - **Aplicación (`src/application/`):** Casos de uso (`analyze-evidence.ts`, `manage-cases.ts`) y puertos (`forensics-api.port.ts`, `case-repository.port.ts`).
-- **Infraestructura (`src/infrastructure/`):** Adaptador HTTP (`fetch`), almacenamiento local (`localStorage`) y derivación de credenciales locales con PBKDF2.
+- **Infraestructura (`src/infrastructure/`):** Adaptador HTTP, almacenamiento local solo para preferencias/historial y criptografía Web Crypto para huellas; la sesión activa es HttpOnly del servidor.
 - **Capa UI (`src/ui/`):** Vistas `.astro` y controladores reactivos TypeScript en cliente.
 
 ### 2.2. Backend (`backend/`): Servicio de Inferencia Monolítico Síncrono
@@ -51,14 +51,14 @@ El backend (`FastAPI` + `PyTorch`) opera como un motor de inferencia multimodelo
 
 | Componente | Limitación Actual (AS-IS) | Solución Arquitectónica (TO-BE) |
 |---|---|---|
-| **Inferencia** | Síncrona en `POST /predict` (bloqueo del event loop; timeouts en videos largos). | Desacoplamiento asíncrono con **Celery** + **Redis** (HTTP 202 Accepted + Polling / SSE). |
+| **Inferencia** | El endpoint conserva compatibilidad HTTP, pero el análisis se encola. | **Celery** + **Redis** con HTTP `202 Accepted`, `job_id` y polling autenticado. |
 | **Persistencia** | En memoria / efímera; los casos se pierden. | **PostgreSQL 16 en la Nube (Neon DB)** con pooler SSL para expedientes, reportes y trazabilidad. |
 | **Ingesta de Evidencia** | Archivo temporal eliminado tras inferencia; riesgo de contaminación probatoria. | **Cadena de Custodia ISO/IEC 27037:** Evidencia Original inmutable (Read-Only) y **Copia Forense de Trabajo**. |
-| **Autenticación y Auditoría** | Local con PBKDF2 en navegador; sin auditoría central. | **Microservicio Externo de Auth & Audit (`auth-service-w3lo.onrender.com`)**: JWT Bearer + `POST /api/internal/audit` con `X-Internal-Api-Key`. |
+| **Autenticación y Auditoría** | Sesión HttpOnly en Astro SSR y validación remota. | **Microservicio Externo de Auth & Audit (`auth-service-w3lo.onrender.com`)**: JWT Bearer + `POST /api/internal/audit` con `X-Internal-Api-Key`. |
 | **Clasificación Forense** | Binaria simple ('Fake' vs 'Real') con reservas. | **Taxonomía Tripartita Rigurosa:** `MANIPULADO`, `SIN_MANIPULACION` y `ANTECEDENTES`. |
 | **Marcas de Tiempo** | Segundos sueltos aislados. | **Detección Temporal Continua:** Intervalos exactos (`timecode_start` - `timecode_end`), fotogramas y pico de score. |
 | **Explicabilidad (XAI)** | EigenCAM agnóstico a clase con baja resolución. | **Grad-CAM++ / HiResCAM** + **Attention Rollout** + **Filtro Guiado por Bordes** + Hoja de ruta de entrenamiento con máscaras. |
-| **Dictamen Pericial** | Datos crudos en JSON. | **Dictamen Pericial en PDF (WeasyPrint / ReportLab):** Certificado judicial con datos del perito, láminas demostrativas y firma digital. |
+| **Dictamen Pericial** | Resultado JSON archivado. | **Informe PDF con ReportLab:** identificación, hashes, señales, observaciones, reservas y conclusiones; se cifra y se sella como artefacto append-only. |
 
 ---
 
@@ -144,7 +144,7 @@ sequenceDiagram
     %% 2. Ingesta y Cadena de Custodia ISO/IEC 27037
     Perito->>SPA: Carga video.mp4 para peritaje
     SPA->>SPA: Calcula hash SHA-256 preliminar
-    SPA->>Core: POST /api/v1/cases/analyze (Video + Metadatos + Token)
+    SPA->>Core: POST /predict (Video + Huella + Sesión)
     
     Core->>Auth: GET /api/auth/me (Verifica token y extrae datos perito)
     Auth-->>Core: 200 OK (Identidad verificada)
@@ -160,33 +160,34 @@ sequenceDiagram
     Note over Core,Auth: { user_id, action: "CASE_INGESTION_AND_ANALYSIS_STARTED", endpoint, ip }
     
     %% 4. Despacho Asíncrono
-    Core->>Redis: Encola 'tasks.process_video(case_id)'
-    Core-->>SPA: HTTP 202 Accepted { case_id, status: 'QUEUED' }
+    Core->>Neon: INSERT INTO analysis_jobs (status='QUEUED')
+    Core->>Redis: Encola 'certiface.analyze_evidence(case_id, evidence_id, job_id)'
+    Core-->>SPA: HTTP 202 Accepted { job_id, status: 'QUEUED' }
 
     %% 5. Inferencia en Worker
     Worker->>Redis: Consume tarea
-    Worker->>Neon: UPDATE analysis_reports SET status='PROCESSING'
+    Worker->>Neon: UPDATE analysis_jobs SET status='PROCESSING'
     Worker->>Storage: Abre Copia Forense de Trabajo
     Worker->>Worker: Extrae fotogramas con OpenCV + Detección YuNet
     Worker->>Worker: Inferencia MoE (GAN, FaceSwap, Difusión, Escena)
     Worker->>Worker: Detecta marcas de tiempo exactas (timecodes)
-    Worker->>Worker: Genera mapas de calor de alta resolución (Grad-CAM++ / Guided Filter)
+    Worker->>Worker: Genera mapas de calor EigenCAM fusionados
     Worker->>Storage: Guarda láminas demostrativas (fotograma + heatmap)
     Worker->>Worker: Evalúa taxonomía (MANIPULADO / SIN_MANIPULACION / ANTECEDENTES)
     
-    Worker->>Neon: UPDATE analysis_reports (verdict, confidence, scores)
+    Worker->>Neon: INSERT analysis_reports (verdict, confidence, scores, PDF hash)
+    Worker->>Neon: UPDATE analysis_jobs SET status='COMPLETED', report_id
     Worker->>Neon: INSERT INTO timecode_inconsistencies (intervalos exactos)
     Worker->>Neon: INSERT INTO custody_audit_log (action='INFERENCE_COMPLETED')
     Worker->>Auth: POST /api/internal/audit (action: "INFERENCE_COMPLETED")
 
     %% 6. Finalización y Dictamen
-    SPA->>Core: GET /api/v1/cases/{case_id}/status -> COMPLETED
+    SPA->>Core: GET /api/v1/jobs/{job_id} -> COMPLETED
     SPA-->>Perito: Muestra resultados, marcas de tiempo y visor de láminas
     Perito->>SPA: Redacta y confirma conclusiones periciales
-    SPA->>Core: POST /api/v1/cases/{case_id}/finalize-report (Conclusiones)
-    Core->>Core: Genera Dictamen Pericial PDF (WeasyPrint) + Hash SHA-256 del PDF
-    Core->>Storage: Guarda dictamen oficial
-    Core->>Neon: UPDATE analysis_reports SET pdf_report_uri, pdf_sha256
+    SPA->>Core: POST /api/v1/cases/{case_id}/reports/{report_id}/finalize (Conclusiones)
+    Core->>Core: Genera nueva revisión PDF (ReportLab) + Hash SHA-256
+    Core->>Storage: Guarda revisión JSON y PDF como nuevos objetos
     Core-->>SPA: Dictamen Pericial PDF listo para descarga probatoria
 ```
 
@@ -321,7 +322,7 @@ El sistema se conecta al servicio desplegado en `https://auth-service-w3lo.onren
    - Con el token recibido, consulta `GET /api/auth/me` para obtener el perfil (`first_name`, `last_name`, `identifier` correspondiente a la matrícula/cédula profesional, `role`).
    - El token se adjunta en cada petición al Core de CertiFace: `Authorization: Bearer <access_token>`.
 2. **Validación en Backend:**
-   - FastAPI implementa una dependencia `get_current_perito` que valida el token contra el servicio (con caché en memoria/Redis) y asegura la sincronización del registro en la tabla local `peritos`.
+   - FastAPI implementa una dependencia `get_current_perito` que valida el token contra el servicio en cada petición y asegura la sincronización del registro en la tabla local `peritos`.
 3. **Auditoría Centralizada (`POST /api/internal/audit`):**
    - Cada evento forense (acceso al video, ejecución de análisis, generación de dictamen, descarga) despacha de forma asíncrona un payload al servicio central con la cabecera `X-Internal-Api-Key`:
    ```json
@@ -383,7 +384,12 @@ Para lograr mapas a nivel de píxel sin depender de CAM:
 
 ## 8. Generación del Dictamen Pericial Defendible en PDF
 
-El dictamen judicial se genera mediante **WeasyPrint** garantizando formato estándar **PDF/A-1b** y consta de 8 apartados indispensables:
+El informe se genera mediante **ReportLab** en `backend/app/report_pdf.py` y se
+almacena como un artefacto cifrado y firmado. Contiene identificación del caso,
+cadena de custodia, resultado y confianza orientativa, señales por modelo,
+observaciones temporales, reservas y conclusiones del perito. La implementación
+actual no afirma conformidad PDF/A-1b ni firma digital del documento; la firma
+forense se aplica al manifiesto Ed25519 que referencia el PDF y su SHA-256.
 
 1. **Encabezado y Acreditación del Perito:** Nombres, apellidos, número de identificación / colegiatura (extraídos de `GET /api/auth/me`), juzgado/expediente de destino.
 2. **Cadena de Custodia:** Nombre del archivo original, tamaño, hash SHA-256 original y hash SHA-256 de la copia forense de trabajo.
@@ -403,11 +409,11 @@ El dictamen judicial se genera mediante **WeasyPrint** garantizando formato est�
 
 | Dimensión | Estado Anterior (AS-IS) | Estado Objetivo Actualizado (TO-BE) |
 |---|---|---|
-| **Proveedor Auth** | Local en navegador con PBKDF2 | **API Externa Auth & Audit (`auth-service-w3lo.onrender.com`)** |
+| **Proveedor Auth** | Sesión HttpOnly en Astro SSR | **API Externa Auth & Audit (`auth-service-w3lo.onrender.com`)** |
 | **Auditoría** | No centralizada; sin traza de accesos | **Dual:** Local en PostgreSQL (`custody_audit_log`) y Central (`/api/internal/audit`) |
 | **Base de Datos** | Sin persistencia (en memoria) | **Neon PostgreSQL 16 (AWS sa-east-1)** con pooler y SSL forzado |
 | **Cadena de Custodia** | Un solo archivo efímero | **ISO/IEC 27037:** Master Copy (Read-Only) + Copia Forense de Trabajo con hash verificado |
 | **Veredicto** | Binario simple ('Fake'/'Real') | **Taxonomía Tripartita:** `MANIPULADO`, `SIN_MANIPULACION`, `ANTECEDENTES` |
 | **Marcas Temporales** | Segundos enteros aproximados | **Intervalos continuos exactos** (`timecode_start` - `timecode_end`, frames y pico) |
 | **XAI / Heatmaps** | EigenCAM difuso con GaussianBlur | **Grad-CAM++ / Rollout + Guided Filter** + Entrenamiento con máscaras de falsificación |
-| **Entregable Judicial** | JSON efímero en navegador | **Dictamen Pericial en PDF** con láminas demostrativas y firma digital |
+| **Entregable Judicial** | JSON, láminas y PDF archivados como objetos cifrados | **Informe PDF** con manifiesto y hash verificables |

@@ -83,8 +83,11 @@ contiene referencias y hashes en lugar de replicar las imágenes base64. La
 respuesta interactiva puede conservarlas para el visor existente.
 
 **Formato de reporte implementado:** JSON estructurado y sellado, con láminas
-JPEG. No se añadió un generador de dictámenes PDF; los campos PDF antiguos del
-modelo no se utilizan para almacenar JSON ni se presentan como PDFs generados.
+JPEG y un informe PDF generado con ReportLab. El PDF contiene identificación del
+expediente, hashes de la evidencia original y copia de trabajo, resultado,
+señales por modelo, observaciones temporales, reservas y conclusiones del perito.
+El PDF se cifra, se firma mediante el manifiesto y se registra en
+`analysis_reports.pdf_report_uri` y `analysis_reports.pdf_sha256`.
 
 ## 4. Componentes y responsabilidades
 
@@ -96,6 +99,8 @@ modelo no se utilizan para almacenar JSON ni se presentan como PDFs generados.
 | `app/storage/retention.py` | Consulta real de Bucket Lock y acceso público en Cloudflare. |
 | `app/storage/runtime.py` | Directorio privado de temporales y límite de solicitudes. |
 | `app/forensic_storage.py` | Preservación de objetos, copias, reportes y manifiestos. |
+| `app/report_pdf.py` | Generación del informe pericial PDF. |
+| `app/celery_app.py` / `app/tasks.py` | Broker Redis, resultados y workers de inferencia asíncrona. |
 | `app/forensic_workflow.py` | Verificación, inferencia sobre copia y registro de resultados. |
 | `app/forensic_routes.py` | Autorización por expediente, ingesta, análisis, descargas y revisiones. |
 | `app/models_db.py` | Metadatos e índice de artefactos privados en PostgreSQL. |
@@ -297,12 +302,13 @@ No se añadió todavía una cola de reintentos de auditoría.
   el objeto ni se continúa el análisis.
 - Nombre de archivo repetido: nuevo UUID; no se sobrescribe otro original.
 - Fallo de inferencia: la evidencia ya preservada se conserva y se audita el fallo.
+- Inferencia asíncrona: `POST /predict` responde `202` con un `job_id`; Celery procesa la copia de trabajo y el cliente consulta su estado.
 - Fallo entre R2 y PostgreSQL: puede quedar un conjunto remoto sin índice de BD.
   No existe una transacción distribuida. Se conserva para reconciliación; no se
   elimina automáticamente ni se anuncia como expediente confirmado.
 - Un timeout después de confirmar una operación puede dejar un resultado válido
-  aunque el cliente no haya recibido la respuesta. Revisar el expediente antes
-  de repetir; todavía no hay claves de idempotencia del cliente ni Celery.
+  aunque el cliente no haya recibido la respuesta. El `job_id` permite consultar
+  el estado sin repetir la ingesta ni la inferencia.
 - Evidencia antigua con rutas locales y sin manifiesto: se rechaza como no
   verificable. No se convierte en “verificada” automáticamente; requiere una
   migración controlada con contraste de hashes y registro de procedencia.
@@ -324,7 +330,9 @@ adecuados en el equipo forense.
 | GET `/api/v1/cases` | Consultar expedientes propios. |
 | POST `/api/v1/cases/{id}/ingest` | Preservar original, copia y manifiesto. |
 | POST `/api/v1/cases/{id}/analyze` | Analizar una copia verificada. |
-| POST `/predict` | Compatibilidad con el laboratorio: ahora crea expediente y preserva todo. |
+| POST `/predict` | Crea expediente, preserva original/copia y encola la inferencia; responde `202`. |
+| POST `/api/v1/cases/{id}/analyze-async` | Encola un análisis de una evidencia existente o recién incorporada. |
+| GET `/api/v1/jobs/{job_id}` | Estado y resultado del trabajo Celery, limitado al perito propietario. |
 | GET `/api/v1/cases/{id}/evidences` | Evidencias del expediente. |
 | GET `/api/v1/cases/{id}/artifacts` | Índice de objetos y revisiones. |
 | GET `/api/v1/cases/{id}/artifacts/{object}/download` | Descarga privada verificada. |
@@ -333,7 +341,13 @@ adecuados en el equipo forense.
 | GET `/api/v1/storage/status` | Comprobar el almacén sin mostrar secretos. |
 
 La web accede mediante su pasarela `/api/forensics/`, usando la sesión HttpOnly.
-El resultado ofrece descargas de original, reporte JSON y manifiesto. El sello
+El resultado ofrece descargas de original, reporte JSON, informe PDF y manifiesto.
+La inferencia pesada no se ejecuta dentro de la petición HTTP: `POST /predict`
+preserva la evidencia, crea un `analysis_jobs` operativo y publica la tarea en
+Redis; un worker Celery analiza la copia de trabajo y el cliente consulta
+`GET /api/v1/jobs/{job_id}`. El sello
+El resultado de Celery es un canal operativo temporal; la evidencia, el JSON,
+las láminas y el PDF definitivos permanecen en el almacén forense cifrado.
 visual final del checklist solo se actualiza después de archivar su revisión.
 No se devolvieron tokens S3 ni URLs presignadas al navegador.
 

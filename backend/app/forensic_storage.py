@@ -92,7 +92,8 @@ class ForensicStorage:
             "received_filename": str(file_name)[:255]}, retention)
 
     def archive_report(self, result: dict, case_id: str, evidence_id: str, report_id: str, owner_id: str, actor_id: str,
-                       evidence_manifest: Artifact, evidence_original: Artifact, provenance: dict, previous: dict | None = None) -> PreservedBundle:
+                       evidence_manifest: Artifact, evidence_original: Artifact, provenance: dict, previous: dict | None = None,
+                       pdf_bytes: bytes | None = None) -> PreservedBundle:
         retention = self.retention.check()
         case_id, evidence_id, report_id = identifier(case_id), identifier(evidence_id), identifier(report_id)
         self.verify(evidence_original, evidence_manifest, case_id, evidence_id, owner_id)
@@ -125,6 +126,8 @@ class ForensicStorage:
         encoded = canonical_json(document)
         report = self._write("report", f"{root}/report.json.enc", encoded, "application/json")
         artifacts.append(report)
+        if pdf_bytes is not None:
+            artifacts.append(self._write("pdf", f"{root}/report.pdf.enc", pdf_bytes, "application/pdf"))
         return self._seal(root, artifacts, {"event": "REPORT_ARCHIVED", "case_id": case_id, "evidence_id": evidence_id,
             "report_id": report_id, "revision_id": revision_id, "owner_id": str(owner_id), "actor_id": str(actor_id),
             "original_sha256": evidence_original.sha256, "evidence_manifest": asdict(evidence_manifest), "previous_revision": previous}, retention)
