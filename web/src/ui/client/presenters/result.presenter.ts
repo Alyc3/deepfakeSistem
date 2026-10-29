@@ -34,7 +34,7 @@ export function renderArchive(archive?: ArchiveReceipt): void {
   const links = document.getElementById("archive-downloads")!; links.replaceChildren();
   if (!archive) return;
   document.getElementById("archive-state")!.textContent = archive.retention_verified ? "Archivo preservado · firma e integridad verificadas" : "Archivo de desarrollo · sin retención verificada";
-  for (const [kind, label] of [["original", "Original"], ["report", "Reporte JSON"], ["manifest", "Manifiesto firmado"]]) {
+  for (const [kind, label] of [["original", "Original"], ["report", "Reporte JSON"], ["pdf", "Informe PDF"], ["manifest", "Manifiesto firmado"]]) {
     const object = archive.objects.find((item) => item.kind === kind);
     if (!object) continue;
     const link = document.createElement("a"); link.className = "ghost-button ghost-button--sm"; link.textContent = label;

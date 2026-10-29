@@ -12,8 +12,11 @@ from app.auth_service import get_current_perito, record_audit_event
 from app.database import get_db
 from app.forensic_storage import get_storage
 from app.forensic_workflow import add_bundle, analyze_and_archive, descriptors, owned_case, preserve, read_upload, verified_working
+from app.celery_app import celery_app
+from app.tasks import analyze_evidence_task
+from app.report_pdf import build_forensic_pdf
 from app.identity import require_laboratory
-from app.models_db import AnalysisReport, CustodyAuditLog, Evidence, ForensicCase, StoredArtifact
+from app.models_db import AnalysisJob, AnalysisReport, CustodyAuditLog, Evidence, ForensicCase, StoredArtifact
 from app.schemas import CaseCreateSchema, FinalizeReportSchema
 from app.storage.ports import IntegrityError, StorageError
 from app.storage.sealing import sha256
@@ -69,6 +72,27 @@ async def analyze(db, case, evidence, perito, request):
     return result
 
 
+async def queue_analysis(db, case, evidence, perito, request):
+    """Crea el trabajo en estado QUEUED y entrega la inferencia al worker."""
+    job_id = uuid.uuid4()
+    queued = AnalysisJob(id=job_id, case_id=case.id, evidence_id=evidence.id, perito_id=perito.id, status="QUEUED")
+    db.add(queued)
+    db.commit()
+    try:
+        task = analyze_evidence_task.apply_async(
+            args=[str(case.id), str(evidence.id), str(perito.id), str(job_id)], task_id=str(job_id)
+        )
+    except Exception:
+        queued.status = "FAILED"
+        queued.error_detail = "El broker de inferencia no está disponible."
+        db.commit()
+        raise HTTPException(503, "El servicio de inferencia asíncrona no está disponible.") from None
+    await audit(db, perito, request, "EVIDENCE_ANALYSIS_QUEUED", evidence,
+                {"case_id": str(case.id), "job_id": task.id}, verified=False)
+    return {"status": "queued", "job_id": task.id, "case_id": str(case.id), "evidence_id": str(evidence.id),
+            "poll_after_ms": 2000}
+
+
 @router.post("/api/v1/cases", status_code=201)
 async def create_case(case_data: CaseCreateSchema, request: Request, perito=Depends(get_current_perito), db=Depends(get_db)):
     if db.query(ForensicCase).filter(ForensicCase.case_number == case_data.case_number).first():
@@ -106,18 +130,49 @@ async def analyze_case(case_id: uuid.UUID, request: Request, evidence_id: Option
     return await analyze(db, case, evidence, perito, request)
 
 
+@router.post("/api/v1/cases/{case_id}/analyze-async", status_code=202)
+async def analyze_case_async(case_id: uuid.UUID, request: Request, evidence_id: Optional[uuid.UUID] = Form(None), file: Optional[UploadFile] = File(None), expected_sha256: Optional[str] = Form(None), perito=Depends(get_current_perito), db=Depends(get_db)):
+    case = await run_in_threadpool(owned_case, db, case_id, perito)
+    if file is not None:
+        evidence, _ = await ingest(db, case, perito, request, file, expected_sha256)
+    elif evidence_id is not None:
+        evidence = db.query(Evidence).filter(Evidence.id == evidence_id, Evidence.case_id == case.id).first()
+        if not evidence:
+            raise HTTPException(404, "Evidencia no encontrada")
+    else:
+        raise HTTPException(400, "Proporciona una evidencia o archivo")
+    return await queue_analysis(db, case, evidence, perito, request)
+
+
 @router.post("/predict")
 async def preserved_prediction(request: Request, file: UploadFile = File(...), expected_sha256: Optional[str] = Form(None), perito=Depends(get_current_perito), db=Depends(get_db)):
-    """Compatibilidad con la web: ahora también crea expediente y preserva todo."""
+    """Compatibilidad con la web: preserva y encola la inferencia."""
     get_storage().retention.check()
     case_id = uuid.uuid4()
     case = ForensicCase(id=case_id, case_number=f"CF-{datetime.now(timezone.utc):%Y%m%d}-{case_id.hex}", title=(file.filename or "Análisis de evidencia")[:255], perito_id=perito.id)
     db.add(case)
     await audit(db, perito, request, "CASE_CREATED", details={"case_id": str(case.id), "source": "laboratory"})
     evidence, evidence_rows = await ingest(db, case, perito, request, file, expected_sha256)
-    result = await analyze(db, case, evidence, perito, request)
-    result["archive"]["objects"].extend(receipt(case, evidence, None, evidence_rows)["objects"])
-    return result
+    queued = await queue_analysis(db, case, evidence, perito, request)
+    queued["archive"] = receipt(case, evidence, None, evidence_rows)
+    return queued
+
+
+@router.get("/api/v1/jobs/{job_id}")
+async def analysis_job(job_id: uuid.UUID, perito=Depends(get_current_perito), db=Depends(get_db)):
+    job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id, AnalysisJob.perito_id == perito.id).first()
+    if not job:
+        raise HTTPException(404, "Trabajo no encontrado")
+    try:
+        result = celery_app.AsyncResult(str(job_id))
+        state = result.state
+    except Exception:
+        raise HTTPException(503, "El backend de resultados de inferencia no está disponible.") from None
+    if job.status == "COMPLETED" and result.successful():
+        return {"status": "completed", "job_id": str(job_id), "result": result.result}
+    if job.status == "FAILED" or result.failed() or state == "FAILURE":
+        return {"status": "failed", "job_id": str(job_id), "detail": "La inferencia no pudo completarse."}
+    return {"status": job.status.lower(), "job_id": str(job_id), "poll_after_ms": 2000}
 
 
 @router.get("/api/v1/cases/{case_id}/evidences")
@@ -170,8 +225,10 @@ async def finalize_report(case_id: uuid.UUID, report_id: uuid.UUID, body: Finali
     _, original, evidence_manifest = await run_in_threadpool(verified_working, db, case, evidence, perito)
     result = previous_document["result"]
     result["expert_conclusions"] = body.expert_conclusions
+    pdf_bytes = await run_in_threadpool(build_forensic_pdf, case=case, evidence=evidence, report_id=str(report.id), result=result,
+        original_sha256=original.sha256, working_sha256=evidence.sha256_working_copy, expert_conclusions=body.expert_conclusions)
     bundle = await run_in_threadpool(storage.archive_report, result, str(case.id), str(evidence.id), str(report.id), str(perito.id), perito.external_auth_id,
-        evidence_manifest, original, previous_document["provenance"], {"artifact_id": str(row.id), "uri": row.storage_uri, "sha256": row.sha256})
+        evidence_manifest, original, previous_document["provenance"], {"artifact_id": str(row.id), "uri": row.storage_uri, "sha256": row.sha256}, pdf_bytes)
     rows = await run_in_threadpool(add_bundle, db, bundle, case, evidence, perito, report)
     await audit(db, perito, request, "EXPERT_REPORT_REVISION_ARCHIVED", evidence, {"report_id": str(report_id), "previous_artifact_id": str(row.id)})
     return receipt(case, evidence, report, rows)

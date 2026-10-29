@@ -1,25 +1,26 @@
 # CertiFace — Peritaje de Medios Digitales
 
-> **Actualización de identidad:** la web ahora usa Astro SSR, sidebar por permisos
-> y sesiones HttpOnly. El acceso usa el servicio central de usuarios y roles;
-> `/predict` requiere autenticación y permiso de laboratorio. Consulta
+> **Estado actual:** la web usa Astro SSR, sidebar por permisos y sesiones
+> HttpOnly. El acceso usa el servicio central de usuarios y roles; `/predict`
+> requiere autenticación y permiso de laboratorio y responde `202` después de
+> preservar la evidencia y encolar la inferencia en Celery/Redis. Consulta
 > [la guía de integración](docs/autenticacion.md) para configuración, uso y pruebas.
 > Las referencias al registro local PBKDF2 que aparecen más abajo describen el flujo anterior.
 
-> **Almacén forense:** originales, copias y reportes ahora se preservan cifrados
-> y sellados en R2. El flujo `/predict` también archiva sus resultados. Consulta
+> **Almacén forense:** originales, copias, reportes JSON, láminas y el informe
+> PDF se preservan cifrados y sellados en R2. La inferencia siempre consume la
+> copia de trabajo verificada; el original no entra al decodificador. Consulta
 > [la implementación y operación del almacén](docs/ALMACEN_FORENSE_S3.md).
 
 Sistema pericial para casos de **suplantación de identidad** (face swap y
 deepfake), compuesto por una **API de inferencia en FastAPI** y una
 **aplicación web responsive construida en Astro con arquitectura hexagonal**.
 El perito incorpora una imagen o un video con un rostro y el sistema emite un
-dictamen preliminar — **auténtico** o **manipulado** — con su confianza
+dictamen preliminar — **REAL**, **MANIPULADO** o **INDICIOS** — con su confianza
 porcentual.
 
-La aplicación tiene tres pantallas: una **landing** de presentación, un **login
-local** (perfil de perito con clave protegida por PBKDF2 en el propio
-navegador, sin servidor de identidad) y el **laboratorio** de análisis. Se usa
+La aplicación tiene landing, acceso gestionado por el servicio externo de
+identidad y laboratorio de análisis. Se usa
 igual desde un monitor de escritorio que desde una tableta o un teléfono: la
 misma interfaz se reorganiza en una sola columna sin perder ninguna sección.
 La identidad visual usa una paleta de negros cálidos, naranja (`#EB4604`,
@@ -48,10 +49,11 @@ Chakra Petch e IBM Plex servidas por la propia aplicación.
 
 ## Arquitectura general
 
-Son **dos piezas independientes** que se comunican por HTTP. El backend no
-sirve la interfaz: solo expone la API de inferencia. La aplicación web es un
-sitio estático que se ejecuta entero en el navegador del perito, así que el
-material analizado va del navegador al backend **sin intermediarios**.
+Son una aplicación Astro SSR y una API FastAPI que se comunican por HTTP. El
+servidor web funciona como BFF: mantiene la sesión HttpOnly y reenvía las
+peticiones autenticadas al servicio de identidad y al backend forense. La
+inferencia pesada se ejecuta en un worker Celery mediante Redis y la interfaz
+consulta el `job_id` hasta obtener el resultado.
 
 ```
 ┌──────────────────────────────┐         ┌──────────────────────────────┐
@@ -88,6 +90,10 @@ deepfakeSistem/
 │   │   ├── scene_model.py     # Sonda De Escena Generada (ensemble)
 │   │   ├── explain.py         # Mapa de calor explicativo (EigenCAM fusionado)
 │   │   ├── preprocessing.py   # Fotogramas (OpenCV) y recorte facial (YuNet)
+│   │   ├── forensic_storage.py # Original, copia, reportes y manifiestos cifrados
+│   │   ├── report_pdf.py      # Informe PDF de análisis y observaciones
+│   │   ├── celery_app.py      # Broker/backend Celery sobre Redis
+│   │   ├── tasks.py           # Worker de inferencia asíncrona
 │   │   └── schemas.py         # (vacío, reservado para modelos Pydantic)
 │   ├── scripts/
 │   │   └── fetch_models.py    # Reconstruye los pesos no versionados
@@ -116,7 +122,7 @@ deepfakeSistem/
     │   ├── infrastructure/    # ADAPTADORES — lo reemplazable
     │   │   ├── http/          # API pericial sobre fetch
     │   │   ├── storage/       # localStorage / sessionStorage
-    │   │   ├── crypto/        # PBKDF2 (acceso) y SHA-256 (custodia)
+    │   │   ├── crypto/        # Web Crypto: SHA-256 para custodia
     │   │   └── container.ts   # Raíz de composición (aquí se enchufa todo)
     │   ├── ui/                # ADAPTADOR DE ENTRADA — la interfaz
     │   │   ├── layouts/       # Envoltura del documento
@@ -179,11 +185,12 @@ python3 -m venv .venv
 pip install -r requirements.txt
 ```
 
-Son once paquetes directos: `fastapi`, `uvicorn[standard]`, `torch`,
+Son los paquetes directos de la API, modelos, almacenamiento y ejecución
+asíncrona: `fastapi`, `uvicorn[standard]`, `torch`,
 `torchvision`, `efficientnet-pytorch`, `pillow`, `opencv-python-headless`,
 `python-multipart` (obligatorio para recibir `multipart/form-data`), `timm`,
-`transformers` y `peft` (los tres últimos los usan el Detector De Face Swap,
-el Detector De Difusión Facial y la Sonda De Escena Generada). La descarga es
+`transformers`, `peft`, `celery[redis]` y `reportlab` (los últimos permiten el
+worker Redis/Celery y el informe PDF). La descarga es
 grande, principalmente por PyTorch y sus bibliotecas CUDA.
 
 ### 4. Descargar los pesos grandes
@@ -201,7 +208,22 @@ Es idempotente: lo ya descargado no se repite. El Detector De Síntesis GAN
 (16 MB, entrenamiento propio) y el Detector Facial YuNet sí van en el
 repositorio.
 
-### 5. Arrancar el servidor
+### 5. Arrancar Redis y el worker de inferencia
+
+Configura `CELERY_BROKER_URL` y `CELERY_RESULT_BACKEND` en `backend/.env`.
+Puedes iniciar el Redis local incluido en el proyecto con:
+
+```bash
+docker compose -f docker-compose.inference.yml up -d redis
+```
+
+Después, desde `backend/`, arranca un worker:
+
+```bash
+celery -A app.celery_app.celery_app worker --loglevel=INFO --pool=solo
+```
+
+### 6. Arrancar el servidor
 
 ```bash
 uvicorn app.main:app --reload
@@ -217,13 +239,13 @@ curl http://127.0.0.1:8000/            # → {"status":"ok"}
 ```
 
 La documentación interactiva que genera FastAPI está en
-`http://127.0.0.1:8000/docs` y permite probar `/predict` subiendo un archivo
-desde el navegador.
+`http://127.0.0.1:8000/docs` y permite probar `/predict` subiendo un archivo.
+La respuesta es `202` con un `job_id`; el resultado se consulta en`GET /api/v1/jobs/{job_id}`.
 
 **Prueba directa desde la terminal:**
 
 ```bash
-curl -F "file=@../web/public/assets/muestras/sample-fake.jpg" http://127.0.0.1:8000/predict
+curl -i -F "file=@../web/public/assets/muestras/sample-fake.jpg" http://127.0.0.1:8000/predict
 ```
 
 ---
@@ -258,10 +280,8 @@ guardada en el navegador: **no hay archivos `.env`**.
 
 ### Uso
 
-1. En la landing, pulsa **Iniciar peritaje**. La primera vez se registra el
-   perfil del perito (credencial + clave de al menos 6 caracteres, guardadas
-   solo en este navegador con hash PBKDF2); las siguientes veces se inicia
-   sesión.
+1. En la landing, pulsa **Iniciar peritaje** e inicia sesión mediante el
+   servicio central de identidad.
 2. El laboratorio es un panel doble: a la **izquierda**, la cámara de
    evidencia con el material completo en su formato original (sin recortes),
    los controles y el registro de casos; a la **derecha**, el registro del
@@ -272,17 +292,17 @@ guardada en el navegador: **no hay archivos `.env`**.
    panel de **cadena de custodia**. Pega en él la huella que anotaste al
    recibir la evidencia: antes de cada análisis se recalcula sobre el archivo
    que se va a enviar y se contrasta. Si coinciden, el material es bit a bit
-   el que se recibió; si no, el sistema **advierte pero no bloquea** — la
-   discrepancia queda escrita en el registro y en el propio dictamen, y el
-   perito decide. Sin huella de referencia el análisis sigue igual, con la
-   integridad marcada como no verificada.
-4. Pulsa **Ejecutar análisis**. Durante la inferencia, una línea de barrido
-   recorre la vista previa y el registro muestra el progreso; al terminar,
+   el que se recibió; si no, el sistema detiene el envío. Sin huella de
+   referencia el análisis puede continuar, con la integridad marcada como no verificada.
+4. Pulsa **Ejecutar análisis**. La evidencia preservada se procesa en una copia
+   de trabajo mediante Celery/Redis; la interfaz consulta el estado sin bloquearse.
+   Al terminar,
    despliega cada etapa con sus datos reales — fotogramas, rostros, la señal
    de cada detector, los momentos sospechosos — y cierra con el dictamen.
 5. El dictamen aparece como sello — **MANIPULADO** en naranja, **REAL** en
    moss o **INDICIOS** en ámbar — con su confianza y el desglose por modelo.
-6. Bajo el dictamen aparece el **mapa de calor explicativo** (EigenCAM
+6. El resultado genera un **informe PDF** cifrado y sellado junto al reporte
+   JSON y sus láminas. Bajo el dictamen aparece el **mapa de calor explicativo** (EigenCAM
    fusionado de todos los peritos): las zonas coloreadas son las regiones que
    sustentaron el veredicto, con la leyenda de ponderación por detector. El
    color va por intensidad en escala de riesgo — verde bajo, amarillo medio,
@@ -329,18 +349,17 @@ Desde `web/`:
 | Comando | Resultado |
 |---|---|
 | `npm run dev` | Servidor de desarrollo con recarga en caliente (`:4321`) |
-| `npm run build` | Sitio estático en `web/dist/` |
+| `npm run build` | Aplicación SSR en `web/dist/` para ejecutar con Node |
 | `npm run preview` | Sirve lo construido, para comprobarlo antes de publicar |
 | `npm run check` | Comprobación de tipos de todo el proyecto |
 
-`npm run build` produce **HTML, CSS y JavaScript planos** en `web/dist/`: no
-hay servidor de Node en producción. Basta con copiar esa carpeta a cualquier
-alojamiento estático (Nginx, Apache, GitHub Pages, Netlify, Vercel, un
-`python -m http.server` para una demostración) y el laboratorio funciona.
+`npm run build` produce una aplicación SSR con el adaptador Node. En producción
+se ejecuta `npm run serve` detrás de HTTPS; no se debe publicar `dist/client`
+como sitio estático independiente porque la sesión HttpOnly y el BFF viven en
+el servidor.
 
-Ten en cuenta que lo publicado es **únicamente la interfaz**. El backend es un
-proceso aparte que debe estar accesible desde el navegador del perito en la
-URL configurada, sea en la máquina local o en un servidor remoto.
+El backend, Redis y el worker Celery son procesos separados que deben estar
+accesibles desde el servidor web mediante sus variables privadas de entorno.
 
 **Recomendaciones para una publicación real:**
 
@@ -465,11 +484,12 @@ exactamente esta distribución de entrada.
 
 ### `main.py` — enrutamiento
 
-Define dos rutas:
+Expone rutas de salud, identidad, expedientes, custodia y laboratorio:
 
 - **`GET /`** — comprobación de salud. Devuelve `{"status": "ok"}` y es lo que
   consulta el indicador de estado del cliente.
-- **`POST /predict`** — recibe el archivo y despacha según su tipo.
+- **`POST /predict`** — preserva original/copia y encola el análisis; devuelve `202` con `job_id`.
+- **`GET /api/v1/jobs/{job_id}`** — consulta el estado y devuelve el resultado al perito propietario.
 
 El despacho entre imagen y video se decide con el **`content_type` del archivo
 subido** (`backend/app/main.py:25`):
@@ -489,11 +509,9 @@ imagen y fallaría. Como el navegador deja el tipo vacío en varios contenedores
 de video, el MIME se deduce de la extensión con una tabla explícita del
 dominio (`web/src/domain/evidence.ts`).
 
-El middleware CORS está abierto a cualquier origen (`allow_origins=["*"]`) y
-**es imprescindible**: la petición la origina el navegador del perito, que
-suele estar en un origen distinto (`localhost:4321` → `127.0.0.1:8000`). Si se
-publica el laboratorio en un dominio fijo, puede restringirse `allow_origins`
-a ese dominio.
+El navegador llama al BFF Astro en el mismo origen. El backend mantiene CORS
+configurable mediante `ALLOWED_ORIGINS`; no se deben usar orígenes abiertos en
+producción.
 
 ### `model.py` — orquestación de peritos y veredicto
 
@@ -635,9 +653,9 @@ adaptador.
 
 ### Por qué las peticiones salen directamente del navegador
 
-El material se envía como `multipart/form-data` desde el propio navegador del
-perito: no hay servidor intermedio que lo reciba, lo copie ni lo registre. Eso
-tiene tres consecuencias de diseño:
+El material se envía como `multipart/form-data` al BFF de Astro, que lo reenvía
+al backend autenticado. El backend preserva el original y la copia de trabajo
+antes de encolar la inferencia. Eso tiene tres consecuencias de diseño:
 
 1. **CORS vuelve a intervenir** — por eso el backend lo mantiene abierto (ver
    `main.py`).
@@ -647,9 +665,9 @@ tiene tres consecuencias de diseño:
 3. El adaptador HTTP es el **único** archivo del frontend que menciona rutas,
    verbos o códigos de estado.
 
-La petición lleva un **tiempo límite de 3 minutos** vía `AbortController`,
-holgado a propósito porque la inferencia en CPU sobre un video puede tardar
-bastante; la comprobación de salud usa 5 segundos.
+La ingesta lleva un límite de 60 segundos. La inferencia se ejecuta en Celery y
+la interfaz consulta el `job_id` durante hasta 15 minutos; la comprobación de
+salud usa 5 segundos.
 
 ### Admisión del material
 
@@ -721,23 +739,20 @@ Los repositorios de `src/infrastructure/storage/` guardan:
 |---|---|---|
 | `certiface:settings` | `localStorage` | URL del backend |
 | `certiface:history` | `localStorage` | Últimos cinco casos (nombre, dictamen, confianza) |
-| `certiface:credential` | `localStorage` | Perfil del perito: credencial, sal y hash |
-| `certiface:session` | `sessionStorage` | Sesión abierta |
+| `certiface:session` | Cookie HttpOnly del servidor Astro | Sesión autenticada |
 
-La credencial persiste entre visitas, pero **la sesión vive solo mientras la
-pestaña esté abierta**: cerrarla obliga a identificarse de nuevo, que es lo
-prudente en un equipo compartido. El material analizado **nunca se guarda**.
+El historial y las preferencias del laboratorio se guardan en el navegador por
+usuario; la evidencia y los reportes se guardan en el almacén forense cifrado.
+La sesión se administra en el servidor y expira según su TTL.
 Si el almacenamiento está bloqueado (modo privado), el laboratorio sigue
 funcionando sin recordar nada entre visitas en lugar de fallar.
 
 ### El acceso del perito
 
-El cliente de escritorio derivaba la clave con scrypt de Node. En el navegador
-el equivalente disponible es **PBKDF2-SHA-256 con 210 000 iteraciones** sobre
-Web Crypto, con sal aleatoria de 16 bytes y 64 bytes de salida; la comparación
-recorre siempre la longitud completa, sin salir antes en la primera
-diferencia. La clave nunca se guarda en claro y no hay servidor de identidad:
-es un control de acceso al puesto de trabajo, no un sistema multiusuario.
+La aplicación web actual valida la sesión mediante el servicio externo de
+identidad y la conserva en una cookie HttpOnly del servidor Astro. El backend
+revalida el perfil y el permiso de laboratorio antes de cada operación. Las
+referencias a PBKDF2 describen una versión anterior del prototipo.
 
 Web Crypto solo existe en **contextos seguros**. Si el laboratorio se sirve por
 `http://` contra una IP de red, el acceso se rechaza con un mensaje explícito
@@ -745,11 +760,9 @@ en lugar de recurrir a un hash débil.
 
 ### La interfaz y el diseño responsive
 
-Astro genera un sitio estático: **no hay framework de interfaz en el
-navegador**, solo el HTML de las tres vistas y los controladores en
-TypeScript. Landing, login y laboratorio conviven en el mismo documento y un
-enrutador mínimo alterna su atributo `hidden`, igual que en la versión de
-escritorio.
+Astro genera la aplicación SSR y entrega HTML, CSS y controladores TypeScript.
+Landing, acceso y laboratorio conviven en las rutas de la aplicación y un
+enrutador mínimo alterna las vistas del laboratorio.
 
 La identidad visual es un sistema de tokens CSS: paleta fija en modo oscuro,
 con el color siempre semántico (naranja = manipulación, moss = autenticidad).
@@ -780,9 +793,27 @@ enfocarlos, y las animaciones de barrido respetan `prefers-reduced-motion`.
 
 ### `POST /predict`
 
-Cuerpo `multipart/form-data` con un único campo `file`.
+Cuerpo `multipart/form-data` con un único campo `file`. El backend preserva la
+evidencia original y una copia de trabajo antes de encolar la inferencia.
 
-**Respuesta para imagen:**
+**Respuesta inmediata (`202 Accepted`):**
+
+```json
+{
+  "status": "queued",
+  "job_id": "uuid",
+  "case_id": "uuid",
+  "evidence_id": "uuid",
+  "report_id": "uuid",
+  "poll_after_ms": 2000
+}
+```
+
+Consulta `GET /api/v1/jobs/{job_id}`. Cuando `status` sea `completed`, el
+campo `result` contiene el dictamen que se documenta abajo. El trabajo se
+ejecuta con Celery y Redis fuera del proceso HTTP.
+
+**Resultado del trabajo para imagen:**
 
 ```json
 {
