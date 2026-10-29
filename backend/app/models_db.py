@@ -119,6 +119,21 @@ class AnalysisReport(Base):
     inconsistencies = relationship("TimecodeInconsistency", back_populates="report", cascade="all, delete-orphan")
 
 
+class AnalysisJob(Base):
+    """Estado operativo mutable del worker; no forma parte del registro probatorio."""
+    __tablename__ = "analysis_jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    case_id = Column(UUID(as_uuid=True), ForeignKey("forensic_cases.id"), nullable=False, index=True)
+    evidence_id = Column(UUID(as_uuid=True), ForeignKey("evidences.id"), nullable=False, index=True)
+    perito_id = Column(UUID(as_uuid=True), ForeignKey("peritos.id"), nullable=False, index=True)
+    report_id = Column(UUID(as_uuid=True), ForeignKey("analysis_reports.id"), nullable=True, index=True)
+    status = Column(String(20), nullable=False, default="QUEUED")  # QUEUED, PROCESSING, COMPLETED, FAILED
+    error_detail = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
 class TimecodeInconsistency(Base):
     __tablename__ = "timecode_inconsistencies"
 
