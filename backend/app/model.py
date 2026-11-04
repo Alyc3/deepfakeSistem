@@ -318,7 +318,7 @@ def predict_image(image_bytes: bytes):
 SUSPECT_THRESHOLD = 0.6  # umbral para señalar un fotograma al perito
 
 
-def predict_video(frames):
+def predict_video(frames, progress_callback=None):
     gan_scores = []
     swap_scores = []
     diff_scores = []
@@ -366,6 +366,8 @@ def predict_video(frames):
                 "sí" if found else "no (fotograma completo)",
                 p_gan, p_swap, p_diff,
             )
+            if progress_callback:
+                progress_callback(i + 1, len(frames), timestamp, found, signal)
 
     # GAN y difusión: mediana. La generación afecta a todos los fotogramas
     # por igual, así que el valor central es el representativo; la mediana

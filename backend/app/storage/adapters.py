@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import logging
 import os
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -7,6 +8,8 @@ from urllib.parse import urlsplit
 import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
+
+logger = logging.getLogger("certiface.storage.r2")
 
 from app.storage.config import StorageConfig, validate_key
 from app.storage.ports import IntegrityError, StorageError, WriteConflict
@@ -37,10 +40,16 @@ class S3ObjectStore:
                 ContentMD5=base64.b64encode(hashlib.md5(data, usedforsecurity=False).digest()).decode("ascii"),
                 Metadata={"cipher-sha256": hashlib.sha256(data).hexdigest(), "format": "certiface-encrypted-v1"})
         except ClientError as error:
-            if error.response.get("ResponseMetadata", {}).get("HTTPStatusCode") in (409, 412):
+            code = error.response.get("Error", {}).get("Code", "Unknown")
+            status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            logger.warning("R2 PutObject rechazado: código=%s HTTP=%s", code, status)
+            if status in (409, 412):
                 raise WriteConflict("La referencia ya existe y no puede sobrescribirse") from None
-            raise StorageError("El almacén rechazó la preservación del objeto") from None
-        except BotoCoreError:
+            if code in ("AccessDenied", "Unauthorized"):
+                raise StorageError("R2 rechazó la escritura. El token S3 debe tener permiso Object Read & Write para el bucket configurado.") from None
+            raise StorageError(f"R2 rechazó la preservación del objeto (código {code}).") from None
+        except BotoCoreError as error:
+            logger.warning("Fallo de conexión durante R2 PutObject: %s", type(error).__name__)
             raise StorageError("No se pudo confirmar la preservación del objeto") from None
         uri = f"s3://{self.config.bucket}/{key}"
         _, persisted = self.read(uri)
@@ -63,7 +72,13 @@ class S3ObjectStore:
             if len(data) > self.config.max_object + 4096:
                 raise IntegrityError("Objeto fuera de los límites del almacén")
             return key, data
-        except (BotoCoreError, ClientError):
+        except ClientError as error:
+            code = error.response.get("Error", {}).get("Code", "Unknown")
+            status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            logger.warning("R2 GetObject rechazado: código=%s HTTP=%s", code, status)
+            raise StorageError(f"No se pudo recuperar el objeto preservado desde R2 (código {code}).") from None
+        except BotoCoreError as error:
+            logger.warning("Fallo de conexión durante R2 GetObject: %s", type(error).__name__)
             raise StorageError("No se pudo recuperar el objeto preservado") from None
         finally:
             if body is not None:

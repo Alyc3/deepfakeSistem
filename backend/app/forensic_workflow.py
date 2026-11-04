@@ -116,26 +116,42 @@ def provenance() -> dict:
     return {"files_sha256": inventory, "packages": {name: importlib.metadata.version(name) for name in ["torch", "torchvision", "transformers", "timm", "cryptography"]}}
 
 
-def run_inference(data: bytes, mime: str) -> dict:
+def run_inference(data: bytes, mime: str, progress_callback=None) -> dict:
     # YuNet y las capturas de activaciones son compartidos: no mezclar solicitudes.
     with _inference_lock:
         from app.model import predict_image, predict_video
         from app.preprocessing import extract_frames
         if mime.startswith("video/"):
+            if progress_callback:
+                progress_callback("extracting", "Extrayendo fotogramas del video")
             frames = extract_frames(data)
             if not frames:
                 raise HTTPException(422, "No se pudo decodificar el video preservado")
-            return predict_video(frames)
-        return predict_image(data)
+            if progress_callback:
+                progress_callback("inference", "Ejecutando los modelos sobre los fotogramas", total=len(frames))
+            return predict_video(frames, progress_callback=(
+                lambda current, total, second, face, signal: progress_callback(
+                    "inference", f"Fotograma {current}/{total} · {second:.1f} s · rostro {'detectado' if face else 'no detectado'} · señal {signal:.1%}",
+                    current=current, total=total, event_id=f"frame-{current}"
+                )
+            ) if progress_callback else None)
+        if progress_callback:
+            progress_callback("inference", "Ejecutando los modelos sobre la imagen", current=0, total=1)
+        result = predict_image(data)
+        if progress_callback:
+            progress_callback("inference", "Análisis de imagen completado", current=1, total=1, event_id="image-complete")
+        return result
 
 
-def analyze_and_archive(db, case, evidence, perito):
+def analyze_and_archive(db, case, evidence, perito, progress_callback=None):
+    if progress_callback:
+        progress_callback("verification", "Verificando integridad y copia de trabajo")
     storage = get_storage()
     storage.retention.check()
     data, original, evidence_manifest = verified_working(db, case, evidence, perito)
     started = time.perf_counter()
     try:
-        result = run_inference(data, evidence.mime_type)
+        result = run_inference(data, evidence.mime_type, progress_callback)
     except (OSError, ValueError):
         raise HTTPException(422, "No se pudo interpretar la evidencia preservada") from None
     processing_time = round(time.perf_counter() - started, 2)
@@ -148,8 +164,12 @@ def analyze_and_archive(db, case, evidence, perito):
         verdict = "SIN_MANIPULACION"
     report_id = uuid.uuid4()
     result.update(report_id=str(report_id), verdict_forensic=verdict, processing_time_seconds=processing_time)
+    if progress_callback:
+        progress_callback("heatmaps", "Preparando mapas de calor y dictamen")
     pdf_bytes = build_forensic_pdf(case=case, evidence=evidence, report_id=str(report_id), result=result,
                                    original_sha256=original.sha256, working_sha256=evidence.sha256_working_copy)
+    if progress_callback:
+        progress_callback("archive", "Sellando el resultado y guardando el informe")
     bundle = storage.archive_report(result, str(case.id), str(evidence.id), str(report_id), str(perito.id), perito.external_auth_id,
         evidence_manifest, original, provenance(), pdf_bytes=pdf_bytes)
     report = AnalysisReport(id=report_id, evidence_id=evidence.id, perito_id=perito.id)

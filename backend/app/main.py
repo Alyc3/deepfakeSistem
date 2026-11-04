@@ -2,6 +2,8 @@ import logging
 import os
 import subprocess
 import sys
+import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict
 
@@ -51,6 +53,27 @@ app = FastAPI(
     description="Sistema pericial forense para detección de deepfakes, preservación ISO/IEC 27037 y emisión de dictámenes.",
 )
 
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    """Registra cada interacción HTTP sin incluir cuerpos, tokens ni query strings."""
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception("Solicitud HTTP fallida request_id=%s method=%s path=%s duration_ms=%d",
+                         request_id, request.method, request.url.path,
+                         round((time.perf_counter() - started) * 1000))
+        raise
+    duration_ms = round((time.perf_counter() - started) * 1000)
+    response.headers["X-Request-ID"] = request_id
+    message = "Solicitud HTTP completada" if response.status_code < 400 else "Solicitud HTTP con error"
+    log = logger.info if response.status_code < 400 else logger.warning
+    log("%s request_id=%s method=%s path=%s status=%d duration_ms=%d",
+        message, request_id, request.method, request.url.path, response.status_code, duration_ms)
+    return response
+
 app.include_router(identity_router)
 app.include_router(forensic_router)
 app.add_middleware(UploadSizeLimit, max_bytes=int(os.getenv("FORENSIC_MAX_UPLOAD_BYTES", "10485760")) + 1024 * 1024)
@@ -66,7 +89,7 @@ app.add_middleware(
 
 @app.exception_handler(StorageError)
 async def storage_error_handler(request: Request, error: StorageError):
-    logger.warning("Operación de almacenamiento rechazada: %s", type(error).__name__)
+    logger.warning("Operación de almacenamiento rechazada: %s", str(error))
     code = 409 if isinstance(error, (IntegrityError, WriteConflict)) else 503
     return JSONResponse({"detail": str(error)}, status_code=code, headers={"Cache-Control": "no-store"})
 
