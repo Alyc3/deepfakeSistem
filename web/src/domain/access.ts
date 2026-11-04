@@ -1,5 +1,6 @@
 export const SECTIONS = [
-  { id: "laboratorio", permission: "laboratory", label: "Laboratorio", group: "Trabajo", icon: "scan", description: "Análisis de evidencia digital" },
+  { id: "inicio", permission: "laboratory", label: "Resumen", group: "Trabajo", icon: "scan", description: "Panel principal" },
+  { id: "casos", permission: "laboratory", label: "Casos y evidencias", group: "Trabajo", icon: "scan", description: "Expedientes y evidencias" },
   { id: "usuarios", permission: "users", label: "Usuarios", group: "Administración", icon: "users", description: "Cuentas y accesos del equipo" },
   { id: "roles", permission: "roles", label: "Roles y accesos", group: "Administración", icon: "shield", description: "Roles del servicio y alcance de acceso" },
   { id: "perfil", permission: "profile", label: "Mi perfil", group: "Cuenta", icon: "user", description: "Tu identidad en CertiFace" },
@@ -11,4 +12,4 @@ export const normalizeRole = (role: string) => role.normalize("NFD").replace(/[\
 export function permissionsFor(role: string, policy: AccessPolicy, fallback: Permission[] = []): Permission[] {
   return Object.entries(policy).find(([key]) => normalizeRole(key) === normalizeRole(role))?.[1] ?? fallback;
 }
-export const homeFor = (permissions: readonly string[]) => `/app/${SECTIONS.find((section) => permissions.includes(section.permission))?.id ?? "perfil"}`;
+export const homeFor = (permissions: readonly string[]) => permissions.includes("laboratory") ? "/app/inicio" : `/app/${SECTIONS.find((section) => permissions.includes(section.permission))?.id ?? "perfil"}`;

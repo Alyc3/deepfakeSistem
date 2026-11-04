@@ -1,4 +1,6 @@
 import json
+import base64
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -22,6 +24,7 @@ from app.storage.ports import IntegrityError, StorageError
 from app.storage.sealing import sha256
 
 router = APIRouter(dependencies=[Depends(require_laboratory)], tags=["Custodia y archivo forense"])
+logger = logging.getLogger("certiface.forensics")
 
 
 def receipt(case, evidence, report, rows):
@@ -163,16 +166,32 @@ async def analysis_job(job_id: uuid.UUID, perito=Depends(get_current_perito), db
     job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id, AnalysisJob.perito_id == perito.id).first()
     if not job:
         raise HTTPException(404, "Trabajo no encontrado")
+    result = None
     try:
         result = celery_app.AsyncResult(str(job_id))
         state = result.state
     except Exception:
-        raise HTTPException(503, "El backend de resultados de inferencia no está disponible.") from None
-    if job.status == "COMPLETED" and result.successful():
-        return {"status": "completed", "job_id": str(job_id), "result": result.result}
+        if job.status != "COMPLETED":
+            raise HTTPException(503, "El backend de resultados de inferencia no está disponible.") from None
+        state = "UNAVAILABLE"
+    if job.status == "COMPLETED":
+        if result is not None and result.successful():
+            return {"status": "completed", "job_id": str(job_id), "result": result.result}
+        report = db.query(AnalysisReport).filter(AnalysisReport.id == job.report_id).first() if job.report_id else None
+        if report:
+            prediction = "Fake" if report.verdict == "MANIPULADO" else "Real" if report.verdict == "SIN_MANIPULACION" else "Suspect"
+            return {"status": "completed", "job_id": str(job_id), "result": {
+                "report_id": str(report.id), "prediction": prediction, "verdict_forensic": report.verdict,
+                "confidence": float(report.confidence_score) if report.confidence_score is not None else None,
+                "frames_analyzed": report.frames_analyzed, "faces_detected": report.faces_detected,
+                "processing_time_seconds": float(report.processing_time_seconds) if report.processing_time_seconds is not None else None,
+                "result_recovered_from_database": True,
+            }}
+        raise HTTPException(503, "El análisis figura completado, pero no se encontró su reporte en PostgreSQL.")
     if job.status == "FAILED" or result.failed() or state == "FAILURE":
         return {"status": "failed", "job_id": str(job_id), "detail": "La inferencia no pudo completarse."}
-    return {"status": job.status.lower(), "job_id": str(job_id), "poll_after_ms": 2000}
+    progress = result.info if result is not None and isinstance(result.info, dict) else None
+    return {"status": job.status.lower(), "job_id": str(job_id), "poll_after_ms": 2000, "progress": progress}
 
 
 @router.get("/api/v1/cases/{case_id}/evidences")
@@ -190,12 +209,96 @@ async def list_artifacts(case_id: uuid.UUID, perito=Depends(get_current_perito),
              "kind": row.kind, "sha256": row.sha256, "size_bytes": row.size_bytes, "created_at": row.created_at.isoformat()} for row in artifacts]
 
 
+@router.get("/api/v1/cases/{case_id}/summary")
+async def case_summary(case_id: uuid.UUID, perito=Depends(get_current_perito), db=Depends(get_db)):
+    """Vista de lectura para expedientes: dictamen, PDF, láminas y trazabilidad."""
+    case = await run_in_threadpool(owned_case, db, case_id, perito)
+    evidence_rows = db.query(Evidence).filter(Evidence.case_id == case.id).order_by(Evidence.uploaded_at.desc()).limit(200).all()
+    output = []
+    try:
+        storage = get_storage()
+        storage_issue = None
+    except StorageError as error:
+        storage = None
+        storage_issue = "No se pudo inicializar el almacén de artefactos."
+        logger.warning("No se pudo inicializar el almacén para el resumen de casos: %s", str(error))
+    for evidence in evidence_rows:
+        report = db.query(AnalysisReport).filter(
+            AnalysisReport.evidence_id == evidence.id,
+            AnalysisReport.status == "COMPLETED",
+        ).order_by(AnalysisReport.created_at.desc()).first()
+        report_artifacts = db.query(StoredArtifact).filter(
+            StoredArtifact.evidence_id == evidence.id,
+            StoredArtifact.report_id == (report.id if report else uuid.UUID(int=0)),
+            StoredArtifact.owner_id == perito.id,
+        ).order_by(StoredArtifact.created_at.desc()).all() if report else []
+        json_artifact = next((item for item in report_artifacts if item.kind == "report"), None)
+        pdf_artifact = next((item for item in report_artifacts if item.kind == "pdf"), None)
+        result = {}
+        artifact_issue = storage_issue
+        if json_artifact and storage is not None:
+            try:
+                artifact, manifest = descriptors(json_artifact)
+                await run_in_threadpool(storage.verify, artifact, manifest, str(case.id), str(evidence.id), str(perito.id), str(report.id))
+                document = json.loads(await run_in_threadpool(storage.read, artifact))
+                result = document.get("result") or {}
+            except (StorageError, ValueError, TypeError) as error:
+                # El resumen debe seguir disponible desde PostgreSQL aunque
+                # el almacén remoto esté temporalmente caído o falte un objeto.
+                logger.warning("No se pudo recuperar el reporte cifrado de la evidencia %s: %s", evidence.id, str(error))
+                artifact_issue = "No se pudo acceder al almacén de artefactos; el resumen usa los datos registrados en PostgreSQL."
+        explanation = result.get("explanation") or {}
+        frames = explanation.get("frames") or []
+        heatmaps = []
+        if json_artifact and storage is not None and not artifact_issue:
+            plates = {item.storage_uri: item for item in report_artifacts if item.kind == "plate"}
+            visual_items = frames if frames else ([explanation] if explanation.get("artifact") else [])
+            for visual in visual_items:
+                plate_data = visual.get("artifact")
+                plate_row = plates.get(plate_data.get("uri")) if isinstance(plate_data, dict) else None
+                if not plate_row:
+                    continue
+                try:
+                    plate, manifest = descriptors(plate_row)
+                    await run_in_threadpool(storage.verify, plate, manifest, str(case.id), str(evidence.id), str(perito.id), str(report.id))
+                    raw = await run_in_threadpool(storage.read, plate)
+                    heatmaps.append({"image": "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii"),
+                                     "second": visual.get("second"), "signal": visual.get("signal")})
+                except StorageError as error:
+                    logger.warning("No se pudo recuperar una lámina de %s: %s", evidence.id, str(error))
+                    artifact_issue = "Uno o más fotogramas no están disponibles desde el almacén de artefactos."
+                    break
+        output.append({
+            "id": str(evidence.id), "file_name": evidence.file_name, "mime_type": evidence.mime_type,
+            "sha256": evidence.sha256_original, "size_bytes": evidence.file_size_bytes,
+            "uploaded_at": evidence.uploaded_at.isoformat(),
+            "report": ({"id": str(report.id), "verdict": report.verdict, "confidence": float(report.confidence_score) if report.confidence_score is not None else None,
+                        "processing_time_seconds": float(report.processing_time_seconds) if report.processing_time_seconds is not None else None,
+                        "frames_analyzed": report.frames_analyzed, "faces_detected": report.faces_detected,
+                        "created_at": report.created_at.isoformat(), "completed_at": report.completed_at.isoformat() if report.completed_at else None,
+                        "expert_conclusions": result.get("expert_conclusions") or report.expert_conclusions, "pdf_artifact_id": str(pdf_artifact.id) if pdf_artifact else None,
+                        "heatmaps": heatmaps, "artifact_issue": artifact_issue,
+                        "prediction": result.get("prediction"), "models": report.models_metadata} if report else None),
+        })
+    logs = db.query(CustodyAuditLog).filter(
+        CustodyAuditLog.perito_id == perito.id,
+        or_(CustodyAuditLog.evidence_id.in_([item.id for item in evidence_rows]) if evidence_rows else CustodyAuditLog.evidence_id.is_(None),
+            CustodyAuditLog.details["case_id"].astext == str(case.id)),
+    ).order_by(CustodyAuditLog.timestamp.asc()).limit(500).all()
+    return {"id": str(case.id), "case_number": case.case_number, "title": case.title, "created_at": case.created_at.isoformat(),
+            "evidences": output, "audit": [{"action": row.action, "timestamp": row.timestamp.isoformat(), "actor": perito.external_auth_id,
+                                             "hash_verified": row.hash_verified} for row in logs]}
+
+
 @router.get("/api/v1/cases/{case_id}/artifacts/{artifact_id}/download")
 async def download_artifact(case_id: uuid.UUID, artifact_id: uuid.UUID, request: Request, perito=Depends(get_current_perito), db=Depends(get_db)):
     case = await run_in_threadpool(owned_case, db, case_id, perito)
     row = db.query(StoredArtifact).filter(StoredArtifact.id == artifact_id, StoredArtifact.case_id == case.id, StoredArtifact.owner_id == perito.id).first()
     if not row:
         raise HTTPException(404, "Objeto no encontrado")
+    if row.kind == "original" and perito.role_name.strip().upper() not in {"ADMIN", "ADMINISTRADOR", "GERENTE_GENERAL"}:
+        await audit(db, perito, request, "ORIGINAL_DOWNLOAD_DENIED", details={"artifact_id": str(row.id), "case_id": str(case.id)}, verified=False)
+        raise HTTPException(403, "La descarga del original requiere autorización administrativa.")
     artifact, manifest = descriptors(row)
     storage = get_storage()
     try:
@@ -225,8 +328,16 @@ async def finalize_report(case_id: uuid.UUID, report_id: uuid.UUID, body: Finali
     _, original, evidence_manifest = await run_in_threadpool(verified_working, db, case, evidence, perito)
     result = previous_document["result"]
     result["expert_conclusions"] = body.expert_conclusions
+    audit_rows = db.query(CustodyAuditLog).filter(
+        CustodyAuditLog.perito_id == perito.id,
+        or_(CustodyAuditLog.evidence_id == evidence.id,
+            CustodyAuditLog.details["case_id"].astext == str(case.id)),
+    ).order_by(CustodyAuditLog.timestamp.asc()).limit(500).all()
+    audit_events = [{"timestamp": item.timestamp.isoformat(), "actor": perito.external_auth_id,
+                     "action": item.action} for item in audit_rows]
     pdf_bytes = await run_in_threadpool(build_forensic_pdf, case=case, evidence=evidence, report_id=str(report.id), result=result,
-        original_sha256=original.sha256, working_sha256=evidence.sha256_working_copy, expert_conclusions=body.expert_conclusions)
+        original_sha256=original.sha256, working_sha256=evidence.sha256_working_copy,
+        expert_conclusions=body.expert_conclusions, audit_events=audit_events)
     bundle = await run_in_threadpool(storage.archive_report, result, str(case.id), str(evidence.id), str(report.id), str(perito.id), perito.external_auth_id,
         evidence_manifest, original, previous_document["provenance"], {"artifact_id": str(row.id), "uri": row.storage_uri, "sha256": row.sha256}, pdf_bytes)
     rows = await run_in_threadpool(add_bundle, db, bundle, case, evidence, perito, report)

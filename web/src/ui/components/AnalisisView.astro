@@ -1,0 +1,47 @@
+---
+---
+<section id="analysis-view" class="analysis-view" hidden>
+  <header class="analysis-screen-header">
+    <div><p class="eyebrow">EXPEDIENTE · <span id="case-view-number"></span></p><h1 id="case-view-title">Análisis de evidencia</h1></div>
+    <button id="close-analysis-view" class="ghost-button" type="button">Volver a casos</button>
+  </header>
+
+  <section id="evidence-workflow" class="surface evidence-workflow" hidden>
+    <div class="surface-heading"><div><span class="metric-label">PRESERVACIÓN FORENSE</span><h2>Ingreso de evidencia</h2></div></div>
+    <div class="workflow-guide"><span class="workflow-guide-number">01</span><div><strong>Selecciona el archivo que se analizará.</strong><p>Se calculará su SHA-256 en el navegador. Tras confirmar la huella original, se guardará el original y se creará una copia de trabajo para el análisis.</p></div></div>
+    <div class="workflow-body">
+      <label class="field"><span>Video o imagen de evidencia</span><input id="case-evidence-file" type="file" accept="image/jpeg,image/png,image/webp,image/bmp,image/gif,video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm" /></label>
+      <div id="evidence-preview" class="evidence-preview" hidden>
+        <video id="evidence-video-preview" controls playsinline preload="metadata" hidden></video>
+        <img id="evidence-image-preview" alt="Vista previa de la evidencia" hidden />
+        <p id="evidence-preview-caption" class="case-summary-meta"></p>
+      </div>
+      <p id="evidence-hash-state" class="workflow-status" role="status">Selecciona una evidencia para calcular su huella SHA-256.</p>
+      <label class="field"><span>Hash SHA-256 original de referencia</span><input id="reference-hash" class="text-input" spellcheck="false" autocomplete="off" placeholder="Pega los 64 caracteres hexadecimales" /></label>
+      <div class="workflow-actions"><button id="create-evidence-copy" class="primary-button" type="button" disabled>Guardar original y crear copia</button><button id="analyze-case-evidence" class="primary-button" type="button" disabled>Analizar copia</button></div>
+      <div id="case-analysis-output" class="analysis-review" hidden><h3>Resultado del análisis</h3><pre id="case-analysis-result"></pre><label class="field"><span>Observaciones y conclusiones del perito (obligatorias)</span><textarea id="expert-observations" class="text-input" rows="5" maxlength="20000" placeholder="Describe la revisión de los indicios y del mapa de calor."></textarea></label><button id="finalize-case-report" class="primary-button" type="button" disabled>Guardar revisión y generar PDF</button><div id="case-report-download"></div></div>
+      <div id="case-audit-log" class="case-audit-log"></div>
+    </div>
+  </section>
+
+  <section id="analysis-screen" class="analysis-screen" aria-live="polite" hidden>
+    <header class="analysis-screen-header">
+      <div><p class="eyebrow">ANÁLISIS EN CURSO · <span id="analysis-case-number"></span></p><h2 id="analysis-case-title">Procesamiento de la copia</h2></div>
+      <button id="analysis-back" class="ghost-button" type="button">Volver al expediente</button>
+    </header>
+    <div class="analysis-status-card surface">
+      <div class="analysis-status-copy"><span id="analysis-phase-label" class="metric-label">TRABAJO EN COLA</span><h2 id="analysis-status-title">Preparando análisis…</h2><p id="analysis-status-detail">La copia preservada se analizará en el worker de inferencia.</p></div>
+      <div id="analysis-progress" class="analysis-progress is-indeterminate" role="progressbar" aria-label="Progreso del análisis" aria-valuemin="0" aria-valuemax="100"><span id="analysis-progress-fill"></span></div>
+      <p id="analysis-progress-caption" class="analysis-progress-caption">Esperando al worker…</p>
+    </div>
+    <div class="analysis-screen-grid">
+      <section class="surface analysis-log-panel"><div class="surface-heading"><h2>Actividad del análisis</h2><span id="analysis-job-label" class="metric-label"></span></div><ol id="analysis-live-log" class="analysis-live-log"><li class="analysis-log-entry is-current">Enviando la tarea al worker…</li></ol></section>
+      <section id="analysis-verdict" class="surface analysis-verdict" hidden>
+        <div class="surface-heading"><h2>Dictamen del sistema</h2></div>
+        <div class="analysis-verdict-body"><span id="analysis-verdict-badge" class="verdict-badge"></span><p id="analysis-verdict-copy"></p><dl id="analysis-verdict-metrics" class="analysis-verdict-metrics"></dl><div id="analysis-heatmaps" class="summary-heatmaps analysis-heatmaps" hidden></div><p id="analysis-result-note" class="case-summary-meta"></p><button id="analysis-review-button" class="primary-button" type="button">Continuar con la revisión pericial</button></div>
+      </section>
+    </div>
+  </section>
+
+  <section id="case-summary" class="case-summary" hidden></section>
+</section>

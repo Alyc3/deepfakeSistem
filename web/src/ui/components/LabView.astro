@@ -7,6 +7,7 @@ import RolesView from "./RolesView.astro";
 import AccountView from "./AccountView.astro";
 import EvidenceChamber from "./EvidenceChamber.astro";
 import AnalysisPanel from "./AnalysisPanel.astro";
+import CasesView from "./CasesView.astro";
 interface Props { user: IdentityUser; permissions: Permission[]; section: string; policy: AccessPolicy; }
 const { user, permissions, section, policy } = Astro.props;
 const available = SECTIONS.filter((item) => permissions.includes(item.permission));
@@ -27,6 +28,8 @@ const initials = name.split(/\s+/).slice(0,2).map((part) => part[0]).join("").to
   <div class="app-main">
     <header class="workspace-header"><div class="header-location"><button id="sidebar-toggle" class="icon-button mobile-menu" type="button" aria-label="Abrir navegación" aria-controls="app-sidebar" aria-expanded="false"><Icon name="menu" /></button><span class="breadcrumb">Espacio de trabajo<span>/</span><strong>{active.label}</strong></span></div><a class="header-profile" href="/app/perfil"><div class="header-profile-copy"><span id="analyst-name">{name}</span><small>{user.role.name}</small></div><span class="avatar-small">{initials}</span></a></header>
     <main id="main-content" class="workspace-content">
+      {section === "inicio" && <section class="dashboard"><div class="page-heading"><div><p class="eyebrow">CertiFace · Resumen</p><h1>Bienvenida, {name}</h1><p class="page-description">Panel pericial · {user.role.name}</p></div><a class="primary-button" href="/app/casos">Abrir casos y evidencias</a></div><div class="metric-row dashboard-metrics"><div><span class="metric-label">Rol activo</span><strong>{user.role.name}</strong></div><div><span class="metric-label">Perito</span><strong>{user.identifier || "—"}</strong></div><div><span class="metric-label">Estado de sesión</span><strong>Verificada</strong></div></div><div class="dashboard-grid"><article class="surface dashboard-card"><span class="metric-label">Flujo de trabajo</span><h2>Custodia clara, análisis trazable</h2><p>Crea un expediente, valida la huella, preserva la evidencia y su copia de trabajo, ejecuta el análisis y documenta la revisión pericial.</p><a class="text-action" href="/app/casos">Ir a casos →</a></article><article class="surface dashboard-card"><span class="metric-label">Archivo pericial</span><h2>Casos recientes</h2><p>Abre cada expediente para continuar el análisis o consultar el resumen visual de los casos finalizados.</p><a class="text-action" href="/app/casos">Ver expedientes →</a></article></div></section>}
+      {section === "casos" && <CasesView user={user} />}
       {section === "laboratorio" && <><div class="page-heading"><div><p class="eyebrow">Análisis forense</p><h1>Laboratorio</h1><p class="page-description">De la evidencia al criterio pericial.</p></div><div class="connection-badge"><span id="status-dot" class="status-dot" data-state="unknown"></span><button id="status-text" class="link-button" type="button">Comprobando motor…</button></div></div><div class="workgrid"><EvidenceChamber /><AnalysisPanel /></div></>}
       {section === "usuarios" && <UsersView />}
       {section === "roles" && <RolesView policy={policy} />}

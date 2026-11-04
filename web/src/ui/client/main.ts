@@ -10,8 +10,11 @@ import { renderHistory } from "./presenters/history.presenter";
 import { emitFinalVerdict } from "./presenters/checklist.presenter";
 import { toggleHeatmapZoom } from "./presenters/heatmap.presenter";
 import { handleLogout } from "./controllers/auth.controller";
+import { wireCases } from "./controllers/cases.controller";
+import { installDiagnostics } from "./diagnostics";
 
 export function startLab(): void {
+  installDiagnostics();
   const shell = document.getElementById("view-app")!;
   const section = shell.dataset.section!;
   document.body.dataset.section = section;
@@ -47,6 +50,7 @@ export function startLab(): void {
     }
   });
   if (section === "usuarios" || section === "roles") wireIdentity();
+  if (section === "casos") wireCases();
   if (section === "laboratorio") {
     state.history = lab().listCases(); renderHistory(); setFile(null);
     wireEvidence(); wireAnalysis(); wireShortcuts();

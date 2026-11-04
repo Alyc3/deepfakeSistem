@@ -34,7 +34,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
     }
     if (protectedPage) {
       if (pathname === "/app" || pathname === "/app/") return context.redirect(homeFor(context.locals.permissions), 303);
-      const section = SECTIONS.find((s) => pathname.replace(/\/$/, "") === `/app/${s.id}`);
+      const section = SECTIONS.find((s) => pathname.replace(/\/$/, "") === `/app/${s.id}`)
+        ?? (pathname.replace(/\/$/, "") === "/app/laboratorio" ? { permission: "laboratory" as const } : undefined);
       if (!section) return new Response("Página no encontrada", { status: 404 });
       if (!context.locals.permissions.includes(section.permission)) return fail(403, "Acceso restringido.");
     }

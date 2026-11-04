@@ -1,5 +1,5 @@
 /**
- * Interfaz â€” EjecuciÃ³n del anÃ¡lisis.
+ * Interfaz — Ejecución del análisis.
  *
  * Somete el material al ensamble pericial y despliega la traza del
  * procedimiento con los datos reales de la respuesta.
@@ -23,7 +23,7 @@ import { renderHistory } from "../presenters/history.presenter";
 import { setBackendOffline, setBackendOnline } from "./settings.controller";
 import { integrityLogLine, verifyBeforeAnalysis } from "./custody.controller";
 
-/** Escalonado de lectura del registro: los datos ya estÃ¡n calculados. */
+/** Escalonado de lectura del registro: los datos ya están calculados. */
 const STEP_MS = 220;
 
 export function setLoading(loading: boolean): void {
@@ -31,10 +31,10 @@ export function setLoading(loading: boolean): void {
   el.scanOverlay.hidden = !loading || !state.file;
   el.analyze.disabled = loading || !state.file;
   el.analyze.textContent = loading
-    ? "Analizandoâ€¦"
+    ? "Analizando…"
     : state.file?.kind === "video"
-      ? "Ejecutar anÃ¡lisis de video"
-      : "Ejecutar anÃ¡lisis";
+      ? "Ejecutar análisis de video"
+      : "Ejecutar análisis";
 }
 
 export async function analyze(): Promise<void> {
@@ -49,7 +49,7 @@ export async function analyze(): Promise<void> {
   addLog(`Material validado: ${file.name} (${file.kind}, ${kb} KB)`);
 
   // Cadena de custodia: la huella se recalcula sobre el archivo que se va a
-  // enviar y se contrasta con la de la recepciÃ³n. Una discrepancia bloquea el análisis.
+  // enviar y se contrasta con la de la recepción. Una discrepancia bloquea el análisis.
   const integrity = await verifyBeforeAnalysis();
   const line = integrityLogLine(integrity);
   addLog(line.text, line.status);
@@ -64,8 +64,8 @@ export async function analyze(): Promise<void> {
   addLog(`Enviado al backend ${state.settings.apiUrl}`);
   startPending(
     file.kind === "video"
-      ? "AnÃ¡lisis en curso: extracciÃ³n, rostros y peritos por fotograma"
-      : "AnÃ¡lisis en curso",
+      ? "Análisis en curso: extracción, rostros y peritos por fotograma"
+      : "Análisis en curso",
   );
 
   const sessionToken = lab().identity.current()?.id;
@@ -84,7 +84,7 @@ export async function analyze(): Promise<void> {
     return;
   }
 
-  stopPending(`AnÃ¡lisis completado en ${elapsed}s`);
+  stopPending(`Análisis completado en ${elapsed}s`);
   setBackendOnline();
 
   await renderAnalysisSteps(outcome.result);
@@ -106,24 +106,24 @@ export async function analyze(): Promise<void> {
 async function renderAnalysisSteps(result: AnalysisResult): Promise<void> {
   if (result.frames_analyzed) {
     addLog(
-      `Fotogramas extraÃ­dos: ${result.frames_analyzed}, repartidos por toda la lÃ­nea de tiempo`,
+      `Fotogramas extraídos: ${result.frames_analyzed}, repartidos por toda la línea de tiempo`,
     );
     await wait(STEP_MS);
 
     addLog(
-      `DetecciÃ³n facial (YuNet): rostro en ${result.faces_detected} de ${result.frames_analyzed} fotogramas`,
+      `Detección facial (YuNet): rostro en ${result.faces_detected} de ${result.frames_analyzed} fotogramas`,
       result.faces_detected === 0 ? "warn" : "done",
     );
     await wait(STEP_MS);
 
     const range = frameSignalRange(result);
     if (range) {
-      addLog(`SeÃ±al por fotograma: mÃ­n ${pctOf(range.min)} Â· mÃ¡x ${pctOf(range.max)}`);
+      addLog(`Señal por fotograma: mín ${pctOf(range.min)} · máx ${pctOf(range.max)}`);
       await wait(STEP_MS);
     }
   } else {
     addLog(
-      `DetecciÃ³n facial (YuNet): ${
+      `Detección facial (YuNet): ${
         result.faces_detected ? "rostro localizado y recortado" : "sin rostro detectable"
       }`,
       result.faces_detected ? "done" : "warn",
@@ -135,7 +135,7 @@ async function renderAnalysisSteps(result: AnalysisResult): Promise<void> {
   for (const key of MODEL_SEQUENCE) {
     const signal = models[key];
     if (signal === undefined) continue;
-    addLog(`${MODEL_NAMES[key]}: seÃ±al ${pctOf(signal)}`, signal > 0.5 ? "note" : "done");
+    addLog(`${MODEL_NAMES[key]}: señal ${pctOf(signal)}`, signal > 0.5 ? "note" : "done");
     await wait(STEP_MS);
   }
 
@@ -143,8 +143,8 @@ async function renderAnalysisSteps(result: AnalysisResult): Promise<void> {
   if (result.frames_analyzed) {
     addLog(
       suspects.length
-        ? `Momentos sospechosos: ${suspects.map((s) => `${s.second}s`).join(" Â· ")}`
-        : "Sin momentos sospechosos seÃ±alados",
+        ? `Momentos sospechosos: ${suspects.map((s) => `${s.second}s`).join(" · ")}`
+        : "Sin momentos sospechosos señalados",
       suspects.length ? "note" : "done",
     );
     await wait(STEP_MS);
@@ -154,7 +154,7 @@ async function renderAnalysisSteps(result: AnalysisResult): Promise<void> {
     addLog(
       result.prediction === "Suspect"
         ? "Dictamen con reserva: revisar el peritaje manual"
-        : "Nota del dictamen: seÃ±al facial atribuida a filtros o procesado de cÃ¡mara",
+        : "Nota del dictamen: señal facial atribuida a filtros o procesado de cámara",
       "note",
     );
     await wait(STEP_MS);

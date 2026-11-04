@@ -1,0 +1,183 @@
+# Esquema de base de datos de CertiFace
+
+## Alcance y fuente
+
+Este documento describe el esquema definido por los modelos SQLAlchemy de `backend/app/models_db.py` y las migraciones de `backend/migrations/`. El motor configurado es PostgreSQL. Los identificadores se manejan como UUID; los datos estructurados del expediente se guardan en PostgreSQL. Los archivos de evidencia, copias, informes y láminas se cifran y se guardan mediante el adaptador de objetos (almacenamiento local en desarrollo o compatible con S3/R2). La BD contiene sus URI, hashes, tamaños, MIME y manifiestos: no almacena el contenido audiovisual como columnas binarias.
+
+`forensic_schema_migrations` registra migraciones aplicadas y su checksum. Además, las migraciones instalan funciones y triggers de custodia; se documentan al final porque son objetos de esquema, no tablas de negocio.
+
+Convenciones: `UUID` corresponde a `uuid`; `TIMESTAMPTZ` a fecha/hora con zona; `JSONB` a JSON binario de PostgreSQL; `NUMERIC(p,s)` a decimal exacto; `TEXT` no tiene longitud fija. “Nulo” indica que el campo admite `NULL`. Los defaults indicados son los expresados en el modelo/migración y algunos los aplica la aplicación.
+
+## Tablas
+
+### `peritos`
+
+| Campo | Tipo | Nulo | Uso |
+|---|---|---:|---|
+| `id` | UUID | No | Clave primaria; UUID generado por la aplicación. |
+| `external_auth_id` | VARCHAR(255) | No | Identificador en el servicio externo; único e indexado. |
+| `email` | VARCHAR(255) | No | Correo sincronizado del perito. |
+| `first_name` | VARCHAR(150) | No | Nombres. |
+| `last_name` | VARCHAR(150) | No | Apellidos. |
+| `identifier` | VARCHAR(100) | No | Cédula o matrícula pericial. |
+| `role_name` | VARCHAR(50) | No | Rol del servicio de identidad. |
+| `phone_number` | VARCHAR(50) | Sí | Teléfono. |
+| `is_active` | BOOLEAN | Sí | Estado activo; default de aplicación `TRUE`. |
+| `created_at` | TIMESTAMPTZ | Sí | Fecha de creación; default de aplicación UTC. |
+| `last_synced_at` | TIMESTAMPTZ | Sí | Última sincronización; default de aplicación UTC. |
+
+### `forensic_cases`
+
+| Campo | Tipo | Nulo | Uso |
+|---|---|---:|---|
+| `id` | UUID | No | Clave primaria. |
+| `case_number` | VARCHAR(100) | No | Número único e indexado del expediente. |
+| `title` | VARCHAR(255) | No | Título del caso. |
+| `description` | TEXT | Sí | Descripción. |
+| `perito_id` | UUID | No | FK a `peritos.id`; responsable del caso. |
+| `created_at` | TIMESTAMPTZ | Sí | Fecha de creación UTC por aplicación. |
+
+### `evidences`
+
+| Campo | Tipo | Nulo | Uso |
+|---|---|---:|---|
+| `id` | UUID | No | Clave primaria. |
+| `case_id` | UUID | No | FK a `forensic_cases.id`, con `ON DELETE CASCADE`. |
+| `file_name` | VARCHAR(255) | No | Nombre original recibido, solo metadato. |
+| `file_size_bytes` | BIGINT | No | Tamaño del original en bytes. |
+| `mime_type` | VARCHAR(100) | No | Tipo de contenido validado. |
+| `sha256_original` | VARCHAR(64) | No | SHA-256 del original; indexado. |
+| `sha256_working_copy` | VARCHAR(64) | No | SHA-256 de la copia de trabajo. |
+| `original_storage_uri` | TEXT | No | URI privada del objeto cifrado original. |
+| `working_storage_uri` | TEXT | No | URI privada de la copia cifrada analizable. |
+| `duration_seconds` | NUMERIC(8,3) | Sí | Duración del medio. |
+| `fps` | NUMERIC(6,2) | Sí | Cuadros por segundo. |
+| `total_frames` | INTEGER | Sí | Número total de cuadros informado/derivado. |
+| `width` | INTEGER | Sí | Ancho en píxeles. |
+| `height` | INTEGER | Sí | Alto en píxeles. |
+| `uploaded_at` | TIMESTAMPTZ | Sí | Fecha de incorporación UTC por aplicación. |
+
+### `custody_audit_log`
+
+| Campo | Tipo | Nulo | Uso |
+|---|---|---:|---|
+| `id` | BIGINT autoincremental | No | Clave primaria. |
+| `evidence_id` | UUID | Sí | FK a `evidences.id`, con borrado en cascada; indexado. Puede ser nulo para eventos de caso/sistema. |
+| `perito_id` | UUID | No | FK a `peritos.id`; indexado. Actor del evento. |
+| `action` | VARCHAR(100) | No | Código de acción de auditoría. |
+| `ip_address` | VARCHAR(45) | No | Dirección IPv4/IPv6 o etiqueta del proceso worker. |
+| `user_agent` | TEXT | Sí | Agente del cliente. |
+| `hash_verified` | BOOLEAN | No | Indica si el evento se registró con verificación de hash; default `TRUE`. |
+| `synced_to_central_audit` | BOOLEAN | Sí | Bandera sincronizable; default `FALSE`. La migración permite el cambio irreversible de falso a verdadero. |
+| `details` | JSONB | Sí | Metadatos adicionales del evento; default de aplicación `{}`. |
+| `timestamp` | TIMESTAMPTZ | Sí | Fecha UTC del evento. |
+
+### `analysis_reports`
+
+| Campo | Tipo | Nulo | Uso |
+|---|---|---:|---|
+| `id` | UUID | No | Clave primaria. |
+| `evidence_id` | UUID | No | FK a `evidences.id`, `ON DELETE CASCADE`. |
+| `perito_id` | UUID | No | FK a `peritos.id`. |
+| `status` | VARCHAR(30) | No | Estado del informe; default `QUEUED`. El modelo contempla `QUEUED`, `PROCESSING`, `COMPLETED`, `FAILED`. |
+| `verdict` | VARCHAR(30) | Sí | Resultado del análisis; indexado. |
+| `confidence_score` | NUMERIC(5,2) | Sí | Confianza expresada por la aplicación. |
+| `caveat_notes` | TEXT | Sí | Reserva o limitación del resultado. |
+| `processing_time_seconds` | NUMERIC(8,2) | Sí | Duración del análisis en segundos. |
+| `hardware_info` | VARCHAR(255) | Sí | Información de hardware declarada por el flujo. |
+| `frames_analyzed` | INTEGER | Sí | Cuadros analizados. |
+| `faces_detected` | INTEGER | Sí | Rostros detectados. |
+| `models_metadata` | JSONB | Sí | Puntajes/metadata de modelos; default de aplicación `{}`. |
+| `expert_conclusions` | TEXT | Sí | Conclusiones agregadas por el perito al finalizar. |
+| `pdf_report_uri` | TEXT | Sí | URI del PDF cifrado archivado. |
+| `pdf_sha256` | VARCHAR(64) | Sí | Hash del PDF. |
+| `created_at` | TIMESTAMPTZ | Sí | Creación UTC por aplicación. |
+| `completed_at` | TIMESTAMPTZ | Sí | Finalización, si aplica. |
+
+### `analysis_jobs`
+
+Estado operativo mutable del trabajo Celery; no es un dictamen probatorio. Se crea en la migración `0003_analysis_jobs.sql`.
+
+| Campo | Tipo | Nulo | Uso |
+|---|---|---:|---|
+| `id` | UUID | No | Clave primaria e identificador del job. |
+| `case_id` | UUID | No | FK a `forensic_cases.id`; indexado. |
+| `evidence_id` | UUID | No | FK a `evidences.id`; indexado. |
+| `perito_id` | UUID | No | FK a `peritos.id`; indexado. |
+| `report_id` | UUID | Sí | FK a `analysis_reports.id`; indexado cuando existe. |
+| `status` | VARCHAR(20) | No | Estado operativo; default `QUEUED`. Valores de flujo: `QUEUED`, `PROCESSING`, `COMPLETED`, `FAILED`. |
+| `error_detail` | TEXT | Sí | Detalle técnico ante fallo. |
+| `created_at` | TIMESTAMPTZ | No | Creación; default PostgreSQL `now()`. |
+| `updated_at` | TIMESTAMPTZ | No | Última actualización; default PostgreSQL `now()`. |
+
+### `timecode_inconsistencies`
+
+| Campo | Tipo | Nulo | Uso |
+|---|---|---:|---|
+| `id` | BIGINT autoincremental | No | Clave primaria. |
+| `report_id` | UUID | No | FK a `analysis_reports.id`, `ON DELETE CASCADE`; indexado. |
+| `timecode_start` | VARCHAR(12) | No | Inicio del intervalo, formato esperado `HH:MM:SS.mmm`. |
+| `timecode_end` | VARCHAR(12) | No | Fin del intervalo. |
+| `duration_seconds` | NUMERIC(6,3) | No | Duración del intervalo en segundos. |
+| `frame_start` | INTEGER | No | Índice de cuadro inicial. |
+| `frame_end` | INTEGER | No | Índice de cuadro final. |
+| `peak_timecode` | VARCHAR(12) | No | Código de tiempo del pico. |
+| `peak_frame` | INTEGER | No | Índice de cuadro del pico. |
+| `peak_anomaly_score` | NUMERIC(5,4) | No | Puntaje de anomalía. |
+| `anomaly_family` | VARCHAR(50) | No | Familia señalada: por ejemplo `FACE_SWAP`, `DIFFUSION`, `GAN`. |
+| `demonstrative_plate_uri` | TEXT | Sí | URI de lámina demostrativa, cuando está disponible. |
+
+### `stored_artifacts`
+
+Índice de objetos cifrados y manifiestos; los bytes viven fuera de PostgreSQL.
+
+| Campo | Tipo | Nulo | Uso |
+|---|---|---:|---|
+| `id` | UUID | No | Clave primaria. |
+| `case_id` | UUID | No | FK a `forensic_cases.id`; indexado. |
+| `evidence_id` | UUID | No | FK a `evidences.id`; indexado. |
+| `report_id` | UUID | Sí | FK a `analysis_reports.id`; indexado. |
+| `owner_id` | UUID | No | FK a `peritos.id`; indexado. |
+| `kind` | VARCHAR(30) | No | Clase de objeto: original, copia de trabajo, reporte, PDF, mapa u otro artefacto del flujo. |
+| `storage_uri` | TEXT | No | URI única del objeto cifrado. |
+| `sha256` | VARCHAR(64) | No | Hash del contenido original del objeto. |
+| `size_bytes` | BIGINT | No | Tamaño del contenido en bytes. |
+| `content_type` | VARCHAR(100) | No | MIME del objeto. |
+| `manifest_uri` | TEXT | No | URI del manifiesto de custodia. |
+| `manifest_sha256` | VARCHAR(64) | No | Hash del manifiesto. |
+| `manifest_size_bytes` | BIGINT | No | Tamaño del manifiesto. |
+| `signing_key_id` | VARCHAR(64) | No | Identificador de la clave que firma el manifiesto. |
+| `retention` | JSONB | No | Resultado y atributos de retención verificada. |
+| `created_at` | TIMESTAMPTZ | No | Fecha de creación UTC. |
+
+### `forensic_schema_migrations`
+
+| Campo | Tipo | Nulo | Uso |
+|---|---|---:|---|
+| `version` | VARCHAR(80) | No | Clave primaria; versión/nombre de migración. |
+| `checksum` | VARCHAR(64) | No | Hash del contenido aplicado para detectar cambios. |
+| `applied_at` | TIMESTAMPTZ | No | Fecha de aplicación; default PostgreSQL `now()`. |
+
+## Relaciones principales
+
+- Un perito tiene casos, reportes y eventos de auditoría.
+- Un caso agrupa evidencias; la fila `evidences` referencia al caso y guarda los metadatos y las URI del original y de la copia.
+- Una evidencia puede tener reportes, eventos de custodia y múltiples artefactos cifrados.
+- Un reporte puede tener varias inconsistencias por código de tiempo y artefactos asociados.
+- Un job relaciona caso, evidencia y perito; al terminar puede referenciar un reporte.
+- Los blobs no se incluyen dentro de `evidences` ni `stored_artifacts`; se recuperan por URI mediante la infraestructura de almacenamiento.
+
+## Integridad y límites observados
+
+Las migraciones agregan triggers que impiden actualizar o borrar `evidences`, `analysis_reports`, `timecode_inconsistencies` y `stored_artifacts`. `custody_audit_log` conserva el evento y admite solo el avance de `synced_to_central_audit` de falso a verdadero. `analysis_jobs` es mutable para reflejar el ciclo de vida del worker. Las relaciones y cascadas del ORM no deben interpretarse como permiso para borrar filas protegidas por triggers.
+
+El modelo SQLAlchemy declara todas las tablas operativas listadas, pero la migración `0001_forensic_archive.sql` se centra en los artefactos, el registro de versiones y los triggers; las tablas base (`peritos`, `forensic_cases`, `evidences`, auditoría e informes) se esperan creadas por la inicialización/migraciones previas del sistema. Verificar siempre el estado aplicado en PostgreSQL antes de usar este documento como inventario de una instancia concreta.
+
+## Fuentes del repositorio
+
+- `backend/app/models_db.py`
+- `backend/migrations/0001_forensic_archive.sql`
+- `backend/migrations/0002_custody_delivery_flag.sql`
+- `backend/migrations/0003_analysis_jobs.sql`
+- `backend/app/forensic_storage.py`
+- `backend/app/storage/`
