@@ -1,0 +1,28 @@
+# Secretos y estado local: nunca dentro de la imagen.
+.env
+.env.*
+!.env.example
+.secrets/
+uploads/
+storage_evidence/
+logs/
+.runtime-tmp/
+
+# Entornos y artefactos de Python
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+
+# Pesos de terceros: los reconstruye scripts/fetch_models.py en el build
+models/Detector_De_Face_Swap.pth
+models/Detector_De_Difusion_Facial/model.safetensors
+models/Sonda_De_Escena_Generada/weights.pth
+
+# No necesarios en producción
+tests/
+deploy/
+start.ps1
+pip

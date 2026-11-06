@@ -18,12 +18,13 @@ const { reset = false } = Astro.props;
 </main>
 <script>
   import { lab } from "@ui/client/lab";
+  import { describeError } from "@ui/client/errors";
   const form = document.getElementById("recovery-form") as HTMLFormElement;
   const message = document.getElementById("recovery-message")!;
   const reset = form.dataset.reset === "true";
   if (reset) {
     const token = new URLSearchParams(window.location.search).get("token");
-    if (token) { (document.getElementById("reset-token") as HTMLInputElement).value = token; window.history.replaceState(null, "", "/restablecer"); }
+    if (token) { (document.getElementById("reset-token") as HTMLInputElement).value = token; window.history.replaceState(null, "", window.location.pathname); }
   }
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -36,7 +37,7 @@ const { reset = false } = Astro.props;
         ? await lab().identity.resetPassword(String(data.get("token")), String(data.get("new_password")))
         : await lab().identity.recoverPassword(String(data.get("email")));
       form.reset(); button.hidden = true;
-    } catch (error) { message.textContent = error instanceof Error ? error.message : "No se pudo conectar. Intenta de nuevo."; }
+    } catch (error) { message.textContent = describeError(error, "No se pudo conectar. Intenta de nuevo."); }
     finally { button.disabled = false; message.hidden = false; form.querySelectorAll<HTMLInputElement>('input[type="password"]').forEach((input) => input.value = ""); }
   });
 </script>

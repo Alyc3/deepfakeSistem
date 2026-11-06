@@ -1,10 +1,82 @@
 ---
-import type { IdentityUser } from "@domain/identity";
+import { fullName, type IdentityUser } from "@domain/identity";
 import Icon from "./Icon.astro";
 interface Props { user: IdentityUser; section: string; }
 const { user, section } = Astro.props;
-const name = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email;
+const name = fullName(user);
 const initials = name.split(/\s+/).slice(0, 2).map((value) => value[0]).join("").toUpperCase();
 ---
-<div class="page-heading"><div><p class="eyebrow">Mi cuenta</p><h1>{section === "perfil" ? "Mi perfil" : "Seguridad"}</h1><p class="page-description">{section === "perfil" ? "Tu identidad dentro del equipo." : "Mantén el control de tu acceso."}</p></div></div>
-{section === "perfil" ? <div class="account-grid"><section class="surface profile-summary"><div class="profile-avatar">{initials}</div><h2>{name}</h2><p>{user.email}</p><span class="badge badge-moss">{user.role.name}</span><div class="profile-status"><span class="status-pip"></span>Cuenta activa</div></section><section class="surface"><div class="surface-heading"><h2>Información personal</h2></div><dl class="profile-details">{[["Nombre", user.first_name], ["Apellido", user.last_name], ["Correo electrónico", user.email], ["Identificación", user.identifier], ["Teléfono", user.phone_number], ["Rol", user.role.name]].map(([label, value]) => <div><dt>{label}</dt><dd>{value || "Sin registrar"}</dd></div>)}</dl><p class="surface-note">Para actualizar tus datos, contacta al administrador.</p></section></div> : <div class="security-grid"><section class="surface security-card"><span class="card-icon"><Icon name="lock" size={24} /></span><h2>Contraseña</h2><p>Recibe un enlace para actualizar tu contraseña.</p><form id="account-recovery-form"><input name="email" type="hidden" value={user.email} /><button class="ghost-button" type="submit">Enviar enlace de recuperación</button><p id="account-recovery-message" class="inline-message" role="status"></p></form></section><section class="surface security-card"><span class="card-icon"><Icon name="shield" size={24} /></span><h2>Sesión actual</h2><p>Has iniciado sesión como <strong>{user.email}</strong>.</p><span class="badge badge-moss">Activa</span><div class="security-actions"><button id="security-logout" class="ghost-button" type="button">Cerrar esta sesión</button></div></section></div>}
+<div class="page-heading"><div><p class="eyebrow">Mi cuenta</p><h1>{section === "perfil" ? "Mi perfil" : "Seguridad"}</h1><p class="page-description">{section === "perfil" ? "Tu identidad dentro del equipo." : "Contraseña, verificación en dos pasos y sesiones abiertas."}</p></div></div>
+{section === "perfil" ? (
+  <div class="account-grid">
+    <section class="surface profile-summary">
+      <div class="profile-avatar">{initials}</div><h2 id="profile-name">{name}</h2><p>{user.email}</p>
+      <span class="badge badge-moss">{user.role.name}</span>
+      <div class="profile-status"><span class="status-pip"></span>Cuenta activa</div>
+    </section>
+    <section class="surface">
+      <div class="surface-heading"><h2>Información personal</h2></div>
+      <form id="profile-form" class="sheet-form account-form">
+        <div class="form-grid">
+          <label class="field"><span>Nombre</span><input class="text-input" name="first_name" value={user.first_name ?? ""} maxlength="100" autocomplete="given-name" /></label>
+          <label class="field"><span>Apellido</span><input class="text-input" name="last_name" value={user.last_name ?? ""} maxlength="100" autocomplete="family-name" /></label>
+        </div>
+        <label class="field"><span>Teléfono</span><input class="text-input" name="phone_number" type="tel" value={user.phone_number ?? ""} maxlength="30" autocomplete="tel" placeholder="+593 99 999 9999" /></label>
+        <dl class="profile-details profile-details--compact">
+          {[["Correo electrónico", user.email], ["Identificación", user.identifier], ["Rol", user.role.name]].map(([label, value]) => <div><dt>{label}</dt><dd>{value || "Sin registrar"}</dd></div>)}
+        </dl>
+        <p class="surface-note">El correo, la identificación y el rol los cambia un administrador.</p>
+        <p id="profile-message" class="form-error" role="status" hidden></p>
+        <div class="sheet-actions"><button class="primary-button" type="submit">Guardar cambios</button></div>
+      </form>
+    </section>
+  </div>
+) : (
+  <div class="security-grid">
+    <section class="surface security-card">
+      <span class="card-icon"><Icon name="lock" size={24} /></span><h2>Contraseña</h2>
+      <p>Al cambiarla se cierran tus demás sesiones. Esta se mantiene abierta.</p>
+      <form id="password-form" class="sheet-form account-form">
+        <label class="field"><span>Contraseña actual</span><input class="text-input" name="current_password" type="password" autocomplete="current-password" required maxlength="128" /></label>
+        <label class="field"><span>Nueva contraseña</span><input class="text-input" name="new_password" type="password" autocomplete="new-password" required maxlength="128" /></label>
+        <label class="field"><span>Repetir nueva contraseña</span><input class="text-input" name="confirmation" type="password" autocomplete="new-password" required maxlength="128" /></label>
+        <p id="password-message" class="form-error" role="status" hidden></p>
+        <div class="security-actions"><button class="ghost-button" type="submit">Cambiar contraseña</button></div>
+      </form>
+      <form id="account-recovery-form" class="account-inline"><button class="link-button" type="submit">¿No recuerdas la actual? Recibe un enlace por correo</button><p id="account-recovery-message" class="inline-message" role="status"></p></form>
+    </section>
+
+    <section class="surface security-card" id="mfa-card" data-enabled={String(!!user.mfa_enabled)}>
+      <span class="card-icon"><Icon name="key" size={24} /></span><h2>Verificación en dos pasos</h2>
+      <p id="mfa-status">{user.mfa_enabled ? "Activa: al iniciar sesión se pide un código de tu app de autenticación." : "Inactiva. Actívala para pedir un código de tu app de autenticación además de la contraseña."}</p>
+      <span id="mfa-badge" class:list={["badge", user.mfa_enabled ? "badge-moss" : "badge-muted"]}>{user.mfa_enabled ? "Activa" : "Inactiva"}</span>
+      <form id="mfa-setup-form" class="sheet-form account-form" hidden={!!user.mfa_enabled}>
+        <label class="field"><span>Confirma tu contraseña</span><input class="text-input" name="password" type="password" autocomplete="current-password" required maxlength="128" /></label>
+        <div class="security-actions"><button class="ghost-button" type="submit">Configurar</button></div>
+      </form>
+      <form id="mfa-enable-form" class="sheet-form account-form" hidden>
+        <ol class="mfa-steps"><li>Escanea el código con Google Authenticator, Authy, Microsoft Authenticator o 1Password.</li><li>Escribe el código de 6 dígitos que aparece en la app.</li></ol>
+        <img id="mfa-qr" class="mfa-qr" alt="Código QR para la app de autenticación" width="180" height="180" />
+        <p class="surface-note">¿No puedes escanear? Escribe esta clave en la app: <code id="mfa-secret" class="mfa-secret"></code></p>
+        <label class="field"><span>Código de la app</span><input class="text-input" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}" maxlength="8" required /></label>
+        <div class="security-actions"><button class="ghost-button" type="submit">Activar</button><button class="link-button" type="button" id="mfa-enable-cancel">Cancelar</button></div>
+      </form>
+      <form id="mfa-disable-form" class="sheet-form account-form" hidden={!user.mfa_enabled}>
+        <div class="form-grid">
+          <label class="field"><span>Contraseña</span><input class="text-input" name="password" type="password" autocomplete="current-password" required maxlength="128" /></label>
+          <label class="field"><span>Código de la app</span><input class="text-input" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}" maxlength="8" required /></label>
+        </div>
+        <div class="security-actions"><button class="ghost-button danger-action" type="submit">Desactivar</button></div>
+      </form>
+      <p id="mfa-message" class="form-error" role="status" hidden></p>
+    </section>
+
+    <section class="surface security-card security-card--wide">
+      <span class="card-icon"><Icon name="monitor" size={24} /></span><h2>Sesiones abiertas</h2>
+      <p>Dispositivos con acceso a tu cuenta. Cierra los que no reconozcas.</p>
+      <ul id="session-list" class="session-list" aria-live="polite"><li class="inline-message">Cargando sesiones…</li></ul>
+      <p id="session-message" class="form-error" role="status" hidden></p>
+      <div class="security-actions"><button id="security-logout" class="ghost-button" type="button">Cerrar esta sesión</button><button id="security-logout-all" class="ghost-button danger-action" type="button">Cerrar todas las sesiones</button></div>
+    </section>
+  </div>
+)}

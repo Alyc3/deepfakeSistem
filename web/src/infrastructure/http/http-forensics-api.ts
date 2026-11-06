@@ -1,15 +1,14 @@
 /** Adaptador de la API del laboratorio; nunca recibe credenciales del almacén. */
 import type { AnalysisResult, ArchiveReceipt } from "@domain/analysis";
 import type { ForensicsApiPort, AnalysisOutcome, BackendStatus } from "@application/ports/forensics-api.port";
-import { normalizeBaseUrl } from "@domain/settings";
-export type BaseUrlProvider = () => string;
+const BASE = "/api/forensics";
 async function failure(response: Response): Promise<string> {
   if (response.status === 401) window.dispatchEvent(new Event("certiface:session-expired"));
   const body = await response.json().catch(() => ({}));
   return typeof body.detail === "string" ? body.detail : "No se pudo completar la operación.";
 }
-export function createHttpForensicsApi(baseUrl: BaseUrlProvider, authenticated: () => boolean): ForensicsApiPort {
-  const endpoint = () => normalizeBaseUrl(baseUrl());
+export function createHttpForensicsApi(authenticated: () => boolean): ForensicsApiPort {
+  const endpoint = () => BASE;
   return {
     async status(): Promise<BackendStatus> {
       const base = endpoint();

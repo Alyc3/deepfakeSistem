@@ -5,7 +5,6 @@
  * las combinaciones que el navegador reserva (Ctrl+R recarga, Ctrl+W cierra),
  * así que "Nuevo examen" usa Alt+N.
  */
-import { currentViewIsLab } from "../view-router";
 import { openFilePicker, resetAll } from "./evidence.controller";
 import { analyze } from "./analysis.controller";
 import { handleLogout } from "./auth.controller";
@@ -31,7 +30,7 @@ export function wireShortcuts(): void {
       return;
     }
 
-    if (!currentViewIsLab()) return;
+    if (document.body.dataset.section !== "laboratorio") return;
 
     // Flechas: recorrer los mapas de calor de los fotogramas analizados.
     if (

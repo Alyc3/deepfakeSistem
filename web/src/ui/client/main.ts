@@ -4,23 +4,23 @@ import { lab } from "./lab";
 import { wireIdentity } from "./controllers/identity.controller";
 import { wireEvidence, setFile } from "./controllers/evidence.controller";
 import { wireAnalysis } from "./controllers/analysis.controller";
-import { refreshHealth } from "./controllers/settings.controller";
+import { refreshHealth } from "./controllers/engine-status.controller";
 import { wireShortcuts } from "./controllers/shortcuts";
 import { renderHistory } from "./presenters/history.presenter";
 import { emitFinalVerdict } from "./presenters/checklist.presenter";
 import { toggleHeatmapZoom } from "./presenters/heatmap.presenter";
 import { handleLogout } from "./controllers/auth.controller";
 import { wireCases } from "./controllers/cases.controller";
-import { installDiagnostics } from "./diagnostics";
+import { wireAccount } from "./controllers/account.controller";
+import { wireAudit } from "./controllers/audit.controller";
+import { wireEngineConnection } from "./controllers/connection.controller";
 
 export function startLab(): void {
-  installDiagnostics();
   const shell = document.getElementById("view-app")!;
   const section = shell.dataset.section!;
   document.body.dataset.section = section;
   lab().identity.hydrate(JSON.parse(shell.dataset.user!));
   state.session = lab().sessionStatus();
-  state.settings = { apiUrl: "/api/forensics" };
   document.getElementById("logout")?.addEventListener("click", () => void handleLogout());
   document.getElementById("security-logout")?.addEventListener("click", () => void handleLogout());
   window.addEventListener("certiface:session-expired", () => window.location.assign("/login?expired=1"));
@@ -49,8 +49,12 @@ export function startLab(): void {
       else if (!event.shiftKey && document.activeElement === links.at(-1)) { event.preventDefault(); links[0]?.focus(); }
     }
   });
+  // Panel oculto del motor forense (Ctrl+Alt+Shift+M); solo existe si el servidor lo habilita.
+  wireEngineConnection(() => { if (section === "laboratorio") void refreshHealth(); });
   if (section === "usuarios" || section === "roles") wireIdentity();
   if (section === "casos") wireCases();
+  if (section === "perfil" || section === "seguridad") wireAccount(section);
+  if (section === "auditoria") wireAudit(JSON.parse(shell.dataset.permissions ?? "[]").includes("users"));
   if (section === "laboratorio") {
     state.history = lab().listCases(); renderHistory(); setFile(null);
     wireEvidence(); wireAnalysis(); wireShortcuts();
