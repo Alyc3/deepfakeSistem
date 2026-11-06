@@ -19,36 +19,9 @@ function need<T extends HTMLElement>(id: string): T {
 }
 
 export const el = {
-  // vistas
-  get viewLanding() { return need<HTMLElement>("view-landing"); },
-  get viewLogin() { return need<HTMLElement>("view-login"); },
-  get viewApp() { return need<HTMLElement>("view-app"); },
-
-  // portada
-  get landingEnter() { return need<HTMLButtonElement>("landing-enter"); },
-  get landingEnterTop() { return need<HTMLButtonElement>("landing-enter-top"); },
-  get landingProtocol() { return need<HTMLButtonElement>("landing-protocol"); },
-  get protocol() { return need<HTMLElement>("protocol"); },
-
-  // acceso
-  get loginForm() { return need<HTMLFormElement>("login-form"); },
-  get loginTitle() { return need<HTMLElement>("login-title"); },
-  get loginHint() { return need<HTMLElement>("login-hint"); },
-  get loginUser() { return need<HTMLInputElement>("login-user"); },
-  get loginPass() { return need<HTMLInputElement>("login-pass"); },
-  get loginError() { return need<HTMLElement>("login-error"); },
-  get loginSubmit() { return need<HTMLButtonElement>("login-submit"); },
-  get loginBack() { return need<HTMLButtonElement>("login-back"); },
-
   // laboratorio
-  get analystName() { return need<HTMLElement>("analyst-name"); },
-  get logout() { return need<HTMLButtonElement>("logout"); },
   get statusDot() { return need<HTMLElement>("status-dot"); },
   get statusText() { return need<HTMLButtonElement>("status-text"); },
-  get settingsToggle() { return need<HTMLButtonElement>("settings-toggle"); },
-  get settingsPanel() { return need<HTMLElement>("settings-panel"); },
-  get apiUrl() { return need<HTMLInputElement>("api-url"); },
-  get settingsSave() { return need<HTMLButtonElement>("settings-save"); },
 
   // cámara de evidencia
   get fileInput() { return need<HTMLInputElement>("file-input"); },

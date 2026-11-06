@@ -1,0 +1,19 @@
+---
+/** Panel oculto (Ctrl+Alt+Shift+M) para conectar la sesión a otro motor forense. Solo se renderiza si está habilitado. */
+import Icon from "./Icon.astro";
+---
+<dialog id="engine-dialog" class="confirm-dialog engine-dialog" aria-labelledby="engine-title">
+  <Icon name="scan" size={30} />
+  <h2 id="engine-title">Motor forense</h2>
+  <p id="engine-state">Comprobando conexión…</p>
+  <form id="engine-form" class="sheet-form compact-form">
+    <label class="field"><span>URL del motor</span><input class="text-input" name="url" type="url" required maxlength="300" placeholder="https://xxxx.trycloudflare.com" autocomplete="off" spellcheck="false" /></label>
+    <p class="field-hint">El servidor web es quien llama al motor, así que la URL debe ser accesible desde él. Para usar el motor de tu equipo desde Render, publícalo con <code>cloudflared tunnel --url http://localhost:8000</code> y pega aquí la URL que te da. En local (<code>npm run dev</code>) sirve <code>http://127.0.0.1:8000</code>.</p>
+    <p id="engine-message" class="form-error" role="alert" hidden></p>
+    <div class="sheet-actions">
+      <button id="engine-reset" class="ghost-button" type="button">Usar el del servidor</button>
+      <button class="ghost-button" type="button" data-engine-close>Cerrar</button>
+      <button class="primary-button" type="submit">Probar y conectar</button>
+    </div>
+  </form>
+</dialog>

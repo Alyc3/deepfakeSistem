@@ -34,12 +34,31 @@
           required
         />
       </label>
-      <p id="login-error" class="login-error" hidden></p>
+      <p id="login-error" class="login-error" role="alert" hidden></p>
       <button id="login-submit" class="primary-button" type="submit">
         Iniciar sesión
       </button>
     </form>
 
-    <div class="login-links"><a class="link-button" href="/">← Volver</a><a class="link-button" href="/recuperar">Olvidé mi contraseña</a></div>
+    <!-- Segundo paso: solo aparece si la cuenta tiene verificación en dos pasos. -->
+    <form id="mfa-form" class="login-form" hidden>
+      <label class="field">
+        <span class="mono-label">Código de verificación</span>
+        <input
+          id="mfa-code"
+          class="text-input"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          pattern="[0-9 ]{6,8}"
+          maxlength="8"
+          required
+        />
+      </label>
+      <p id="mfa-error" class="login-error" role="alert" hidden></p>
+      <button id="mfa-submit" class="primary-button" type="submit">Verificar código</button>
+      <button id="mfa-cancel" class="link-button" type="button">← Usar otra cuenta</button>
+    </form>
+
+    <div id="login-links" class="login-links"><a class="link-button" href="/">← Volver</a><a class="link-button" href="/recuperar">Olvidé mi contraseña</a></div>
   </div>
 </section>

@@ -1,0 +1,39 @@
+# Blueprint de Render para CertiFace web (New > Blueprint). El backend aún no se despliega aquí.
+# Los valores secretos (sync: false) se piden al crear el servicio: cópialos de web/.env.production.
+services:
+  - type: web
+    name: certiface-web
+    runtime: node
+    plan: free
+    rootDir: web
+    buildCommand: bash render-build.sh
+    startCommand: npm start
+    healthCheckPath: /login
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: AUTH_SERVICE_URL
+        value: https://authentication-service.fastapicloud.dev
+      - key: AUTH_INTERNAL_API_KEY
+        sync: false
+      - key: CERTIFACE_API_URL
+        sync: false
+      - key: FORENSICS_API_OVERRIDE
+        value: "true"
+      - key: FORENSICS_API_OVERRIDE_HOSTS
+        value: "*.trycloudflare.com,*.ngrok-free.app,*.ngrok.app"
+      - key: APP_ORIGIN
+        value: https://certiface-web.onrender.com
+      - key: SESSION_TTL_SECONDS
+        value: "14400"
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: TRUSTED_PROXY_COUNT
+        value: "1"
+      - key: ROLE_PERMISSIONS
+        value: '{"ADMINISTRADOR":["laboratory","users","roles","audit","profile","security"],"PERITO":["laboratory","profile","security"],"ABOGADO":["profile","security"]}'
+      - key: DEFAULT_PERMISSIONS
+        value: '["profile","security"]'

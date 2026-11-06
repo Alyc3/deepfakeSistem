@@ -1,9 +1,9 @@
 /**
- * RaÃ­z de composiciÃ³n.
+ * Raíz de composición.
  *
- * Ãšnico punto donde se enchufan adaptadores concretos en los puertos. La
+ * Único punto donde se enchufan adaptadores concretos en los puertos. La
  * interfaz solo conoce este objeto de casos de uso: cambiar `fetch` por otro
- * transporte, o `localStorage` por IndexedDB, se hace aquÃ­ y en ningÃºn otro
+ * transporte, o `localStorage` por IndexedDB, se hace aquí y en ningún otro
  * sitio.
  */
 import { analyzeEvidence, finalizeReport } from "@application/use-cases/analyze-evidence";
@@ -13,9 +13,9 @@ import {
   loginAnalyst,
   logoutAnalyst,
   sessionStatus,
+  verifyAnalystMfa,
 } from "@application/use-cases/manage-session";
 import { clearCases, listCases, recordCase } from "@application/use-cases/manage-cases";
-import { readSettings, saveApiUrl } from "@application/use-cases/manage-settings";
 import { resolveIndications, scoreIndications } from "@application/use-cases/resolve-indications";
 import {
   digestEvidence,
@@ -24,21 +24,17 @@ import {
 } from "@application/use-cases/verify-integrity";
 
 import { createHttpForensicsApi } from "./http/http-forensics-api";
-import { createLocalSettingsRepository } from "./storage/local-settings.repository";
 import { createLocalCaseRepository } from "./storage/local-case.repository";
 import { createHttpIdentity } from "./http/http-identity";
 import { createWebCryptoDigest } from "./crypto/web-crypto-digest";
 
 export function createLab() {
-  const settings = createLocalSettingsRepository();
   const identity = createHttpIdentity();
   const cases = createLocalCaseRepository(() => identity.current()?.id ?? null);
   const digests = createWebCryptoDigest();
 
-  // La API relee la URL en cada llamada: si el perito la cambia en el panel
-  // de configuraciÃ³n, la siguiente peticiÃ³n ya sale a la nueva.
-  const api = createHttpForensicsApi(() => "/api/forensics", () => identity.current() !== null);
-
+  // El navegador solo habla con el servidor web (/api/forensics); este decide a qué motor llamar.
+  const api = createHttpForensicsApi(() => identity.current() !== null);
 
   return {
     identity,
@@ -53,14 +49,12 @@ export function createLab() {
 
     sessionStatus: sessionStatus(identity),
     loginAnalyst: loginAnalyst(identity),
+    verifyAnalystMfa: verifyAnalystMfa(identity),
     logoutAnalyst: logoutAnalyst(identity),
 
     listCases: listCases(cases),
     recordCase: recordCase(cases),
     clearCases: clearCases(cases),
-
-    readSettings: readSettings(settings),
-    saveApiUrl: saveApiUrl(settings),
 
     scoreIndications: scoreIndications(),
     resolveIndications: resolveIndications(),

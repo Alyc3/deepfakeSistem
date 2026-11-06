@@ -20,7 +20,7 @@ import { renderResult } from "../presenters/result.presenter";
 import { renderHeatmap } from "../presenters/heatmap.presenter";
 import { showChecklist } from "../presenters/checklist.presenter";
 import { renderHistory } from "../presenters/history.presenter";
-import { setBackendOffline, setBackendOnline } from "./settings.controller";
+import { setBackendOffline, setBackendOnline } from "./engine-status.controller";
 import { integrityLogLine, verifyBeforeAnalysis } from "./custody.controller";
 
 /** Escalonado de lectura del registro: los datos ya están calculados. */
@@ -61,7 +61,7 @@ export async function analyze(): Promise<void> {
     return;
   }
 
-  addLog(`Enviado al backend ${state.settings.apiUrl}`);
+  addLog("Enviado al motor forense");
   startPending(
     file.kind === "video"
       ? "Análisis en curso: extracción, rostros y peritos por fotograma"

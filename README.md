@@ -4,8 +4,8 @@
 > HttpOnly. El acceso usa el servicio central de usuarios y roles; `/predict`
 > requiere autenticación y permiso de laboratorio y responde `202` después de
 > preservar la evidencia y encolar la inferencia en Celery/Redis. Consulta
-> [la guía de integración](docs/autenticacion.md) para configuración, uso y pruebas.
-> Las referencias al registro local PBKDF2 que aparecen más abajo describen el flujo anterior.
+> [la guía de integración](docs/autenticacion.md) para configuración, uso y pruebas, y
+> [el despliegue en Render](docs/DESPLIEGUE_RENDER.md) para publicar la web.
 
 > **Almacén forense:** originales, copias, reportes JSON, láminas y el informe
 > PDF se preservan cifrados y sellados en R2. La inferencia siempre consume la
@@ -113,28 +113,32 @@ deepfakeSistem/
     │   │   ├── integrity.ts   # Cadena de custodia: huellas y su contraste
     │   │   ├── risk.ts        # Bandas de la escala de riesgo del mapa
     │   │   ├── checklist.ts   # Peritaje manual y aritmética del desempate
-    │   │   ├── analyst.ts     # Perito y credenciales
-    │   │   ├── case-record.ts # Registro de casos
-    │   │   └── settings.ts    # Configuración del laboratorio
+    │   │   ├── analyst.ts     # Sesión visible del perito
+    │   │   ├── identity.ts    # Usuarios, roles, sesiones y auditoría
+    │   │   ├── access.ts      # Secciones y permisos por rol
+    │   │   └── case-record.ts # Registro de casos
     │   ├── application/       # CASOS DE USO Y PUERTOS
-    │   │   ├── ports/         # Contratos: API, ajustes, casos, credencial, huella
+    │   │   ├── ports/         # Contratos: API, identidad, casos, huella
     │   │   └── use-cases/     # Analizar, verificar integridad, acceder, casos
     │   ├── infrastructure/    # ADAPTADORES — lo reemplazable
-    │   │   ├── http/          # API pericial sobre fetch
+    │   │   ├── http/          # API pericial e identidad sobre fetch (hacia el BFF)
+    │   │   ├── server/        # BFF: sesión, tokens, auth-service y motor forense
     │   │   ├── storage/       # localStorage / sessionStorage
     │   │   ├── crypto/        # Web Crypto: SHA-256 para custodia
     │   │   └── container.ts   # Raíz de composición (aquí se enchufa todo)
     │   ├── ui/                # ADAPTADOR DE ENTRADA — la interfaz
     │   │   ├── layouts/       # Envoltura del documento
-    │   │   ├── components/    # Landing, login, laboratorio (.astro)
+    │   │   ├── components/    # Landing, acceso, espacio de trabajo (.astro)
     │   │   ├── styles/        # Tokens de la identidad CertiFace
     │   │   └── client/        # Controladores y presentadores (TypeScript)
-    │   └── pages/index.astro  # Única ruta: las tres vistas
+    │   ├── pages/             # Rutas SSR y API del BFF (/api/identity, /api/forensics)
+    │   └── middleware.ts      # Sesión, permisos, origen y cabeceras de seguridad
     ├── public/assets/
     │   ├── fonts/             # Chakra Petch + IBM Plex (OFL)
     │   ├── art/               # Retícula pericial e icono
     │   └── muestras/          # Muestras de ejemplo
     ├── astro.config.mjs
+    ├── render-build.sh        # Build en Render (ver docs/DESPLIEGUE_RENDER.md)
     └── tsconfig.json          # Alias @domain, @application, @infrastructure, @ui
 ```
 
@@ -256,27 +260,22 @@ En **otra terminal**, con el backend ya en marcha:
 
 ```bash
 cd web
-npm install     # Astro y su cadena de construcción (~90 paquetes)
+cp .env.example .env   # y completa AUTH_INTERNAL_API_KEY
+npm install            # requiere Node >= 22.23.4
 npm run dev
 ```
 
 Queda servida en `http://localhost:4321`. Para abrirla también desde otros
-equipos de la red (una tableta, otro portátil):
+equipos de la red: `npm run dev -- --host`.
 
-```bash
-npm start       # equivale a: astro dev --host
-```
+La web habla con el auth-service y con el motor forense desde su propio
+servidor, con las variables de `web/.env` (ver `docs/autenticacion.md`). El
+motor por defecto es `CERTIFACE_API_URL` (`http://127.0.0.1:8000` en local).
+Con `FORENSICS_API_OVERRIDE=true`, **Ctrl + Alt + Shift + M** abre un panel
+oculto para que tu sesión use otro motor.
 
-> **Nota de seguridad del navegador:** el registro y el acceso del perito
-> derivan la clave con Web Crypto, que los navegadores solo ofrecen en
-> **contextos seguros** — `localhost` o `https://`. Si sirves el laboratorio
-> por `http://` contra una IP de la red, el acceso se rechaza con un aviso
-> explícito en lugar de degradarse a algo inseguro. Para uso en red, sirve la
-> aplicación por HTTPS.
-
-La URL del backend por defecto es `http://127.0.0.1:8000`. Se puede cambiar
-desde el panel de configuración de la propia aplicación (`Ctrl/Cmd+,`) y queda
-guardada en el navegador: **no hay archivos `.env`**.
+> La huella SHA-256 de la cadena de custodia usa Web Crypto, que los
+> navegadores solo ofrecen en **contextos seguros** (`localhost` o `https://`).
 
 ### Uso
 
@@ -331,10 +330,11 @@ volver a comprobar.
 | `Ctrl/Cmd + O` | Abrir archivo |
 | `Ctrl/Cmd + Enter` | Ejecutar análisis |
 | `Alt + N` | Nuevo examen (limpiar la selección) |
-| `Ctrl/Cmd + ,` | Configurar la URL del backend |
+| `Ctrl/Cmd + ,` | Abrir la seguridad de la cuenta |
 | `Ctrl/Cmd + Shift + L` | Cerrar sesión |
+| `Ctrl + Alt + Shift + M` | Conectar la sesión a otro motor forense (panel oculto, en cualquier pantalla) |
 | `←` / `→` | Recorrer los mapas de calor de los fotogramas analizados |
-| `Esc` | Cerrar el mapa de calor ampliado o el panel de configuración |
+| `Esc` | Cerrar el mapa de calor ampliado |
 
 Sustituyen al menú de la aplicación de escritorio anterior. Se evitan a
 propósito las combinaciones que el navegador reserva para sí (`Ctrl+R`
@@ -350,28 +350,21 @@ Desde `web/`:
 |---|---|
 | `npm run dev` | Servidor de desarrollo con recarga en caliente (`:4321`) |
 | `npm run build` | Aplicación SSR en `web/dist/` para ejecutar con Node |
-| `npm run preview` | Sirve lo construido, para comprobarlo antes de publicar |
+| `npm start` | Ejecuta lo construido con las variables del entorno (Render) |
+| `npm run serve` | Ejecuta lo construido leyendo `web/.env` |
 | `npm run check` | Comprobación de tipos de todo el proyecto |
+| `npm test` | Pruebas del BFF, la sesión y los adaptadores |
 
-`npm run build` produce una aplicación SSR con el adaptador Node. En producción
-se ejecuta `npm run serve` detrás de HTTPS; no se debe publicar `dist/client`
-como sitio estático independiente porque la sesión HttpOnly y el BFF viven en
-el servidor.
+`npm run build` produce una aplicación SSR con el adaptador Node. No se debe
+publicar `dist/client` como sitio estático independiente: la sesión HttpOnly y
+el BFF viven en el servidor. El despliegue en Render (`render.yaml`,
+`web/render-build.sh` y `web/.env.production`) está descrito en
+[`docs/DESPLIEGUE_RENDER.md`](docs/DESPLIEGUE_RENDER.md).
 
 El backend, Redis y el worker Celery son procesos separados que deben estar
-accesibles desde el servidor web mediante sus variables privadas de entorno.
-
-**Recomendaciones para una publicación real:**
-
-- **Sírvelo por HTTPS.** Además de lo evidente, Web Crypto —y con ella el
-  acceso del perito— solo está disponible en contextos seguros.
-- Si el backend queda en otro origen, mantén su CORS abierto (ya lo está) o
-  restringe `allow_origins` al dominio donde publiques la aplicación.
-- Cabeceras de seguridad recomendadas en el servidor web:
-  `Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:;
-  media-src 'self' blob:; connect-src *` (el `connect-src` abierto es
-  necesario porque la URL del backend la decide el perito), más
-  `X-Content-Type-Options: nosniff` y `Referrer-Policy: no-referrer`.
+accesibles desde el servidor web, no desde el navegador. El servidor web aplica
+CSP estricta (`connect-src 'self'`), `nosniff`, `Referrer-Policy: no-referrer`,
+`X-Frame-Options: DENY` y HSTS en producción.
 
 ---
 
@@ -606,7 +599,7 @@ conocen `fetch`, `localStorage` o el DOM.
 
 | Capa | Carpeta | Qué contiene | Qué **no** puede importar |
 |---|---|---|---|
-| Dominio | `src/domain/` | Reglas del peritaje: dictámenes, admisión del material, checklist, credenciales | Nada. Es TypeScript puro |
+| Dominio | `src/domain/` | Reglas del peritaje: dictámenes, admisión del material, checklist, identidad y permisos | Nada. Es TypeScript puro |
 | Aplicación | `src/application/` | Casos de uso y **puertos** (contratos) | Adaptadores concretos ni el DOM |
 | Infraestructura | `src/infrastructure/` | **Adaptadores**: cliente HTTP, repositorios de navegador, criptografía, raíz de composición | La interfaz |
 | Interfaz | `src/ui/` | Vistas `.astro`, controladores y presentadores | Adaptadores (solo casos de uso) |
@@ -640,10 +633,9 @@ una línea de `container.ts`.
 enchufa a un puerto:
 
 ```ts
-const settings = createLocalSettingsRepository();
-// La API relee la URL en cada llamada: si el perito la cambia en el panel de
-// configuración, la siguiente petición ya sale a la nueva.
-const api = createHttpForensicsApi(() => settings.read().apiUrl);
+const identity = createHttpIdentity();
+// El navegador solo habla con el servidor web (/api/forensics); este decide a qué motor llamar.
+const api = createHttpForensicsApi(() => identity.current() !== null);
 
 return { analyzeEvidence: analyzeEvidence(api), /* … */ };
 ```
@@ -651,14 +643,15 @@ return { analyzeEvidence: analyzeEvidence(api), /* … */ };
 La interfaz recibe un objeto de casos de uso ya montados y nunca importa un
 adaptador.
 
-### Por qué las peticiones salen directamente del navegador
+### Por qué el navegador no habla con el backend
 
 El material se envía como `multipart/form-data` al BFF de Astro, que lo reenvía
-al backend autenticado. El backend preserva el original y la copia de trabajo
-antes de encolar la inferencia. Eso tiene tres consecuencias de diseño:
+al backend con el token del usuario. El backend preserva el original y la copia
+de trabajo antes de encolar la inferencia. Eso tiene tres consecuencias de diseño:
 
-1. **CORS vuelve a intervenir** — por eso el backend lo mantiene abierto (ver
-   `main.py`).
+1. **El token nunca llega al navegador** y no hace falta CORS: la petición al
+   backend es de servidor a servidor. El motor de destino es
+   `CERTIFACE_API_URL` o el que la sesión eligió en el panel oculto.
 2. El **MIME se determina por extensión** con la tabla del dominio, no por lo
    que declare el navegador (que deja vacío el tipo de varios contenedores de
    video). Es justo lo que el backend necesita para distinguir imagen de video.
@@ -737,7 +730,7 @@ Los repositorios de `src/infrastructure/storage/` guardan:
 
 | Clave | Almacén | Contenido |
 |---|---|---|
-| `certiface:settings` | `localStorage` | URL del backend |
+| `certiface:engine-url` | `localStorage` | Última URL escrita en el panel oculto del motor (solo para rellenarlo) |
 | `certiface:history` | `localStorage` | Últimos cinco casos (nombre, dictamen, confianza) |
 | `certiface:session` | Cookie HttpOnly del servidor Astro | Sesión autenticada |
 
@@ -751,12 +744,11 @@ funcionando sin recordar nada entre visitas en lugar de fallar.
 
 La aplicación web actual valida la sesión mediante el servicio externo de
 identidad y la conserva en una cookie HttpOnly del servidor Astro. El backend
-revalida el perfil y el permiso de laboratorio antes de cada operación. Las
-referencias a PBKDF2 describen una versión anterior del prototipo.
+revalida el perfil y el permiso de laboratorio antes de cada operación.
 
-Web Crypto solo existe en **contextos seguros**. Si el laboratorio se sirve por
-`http://` contra una IP de red, el acceso se rechaza con un mensaje explícito
-en lugar de recurrir a un hash débil.
+La verificación en dos pasos, el cambio de contraseña, las sesiones abiertas y
+la administración de usuarios y roles se resuelven contra el auth-service desde
+el servidor web.
 
 ### La interfaz y el diseño responsive
 
@@ -962,7 +954,7 @@ aplicación web muestra ese mensaje tal cual en el registro del análisis.
 |---|---|
 | `FileNotFoundError: models/Detector_De_Sintesis_GAN.pth` | Lanzaste `uvicorn` desde otro directorio. Hazlo desde `backend/`. |
 | `Form data requires "python-multipart"` | Falta esa dependencia: `pip install -r requirements.txt`. |
-| La barra de estado dice «Backend fuera de línea» | El backend no está arrancado, o la URL configurada no coincide. Verifica con `curl http://127.0.0.1:8000/` y revísala en `Ctrl/Cmd+,`. |
+| La barra de estado dice «Backend fuera de línea» | El backend no está arrancado, o la URL configurada no coincide. Verifica con `curl http://127.0.0.1:8000/`, revisa `CERTIFACE_API_URL` o conéctalo con `Ctrl+Alt+Shift+M`. |
 | El acceso —o la verificación de integridad— dice que el navegador no ofrece criptografía segura | Estás sirviendo el laboratorio por `http://` contra una IP. Web Crypto solo existe en contextos seguros: usa `localhost` o publica por HTTPS. |
 | La huella no coincide y el material parece el mismo | Comprueba que el acta registre la huella del **archivo original** y no la de una copia recomprimida (WhatsApp, exportaciones de edición y algunas descargas re-codifican el video y cambian todos sus bits). El aviso es correcto: ese archivo no es el que se recibió. |
 | El panel de custodia no aparece | Solo se muestra con material cargado. Si aparece pero la huella dice «no disponible», es el contexto inseguro de la fila anterior. |
