@@ -6,7 +6,8 @@
 2. Worker: desde `backend/`, `celery -A app.celery_app.celery_app worker --loglevel=INFO --pool=solo`.
 3. Backend: `cd backend` y `./start.ps1` (PowerShell). Usa el Python de `.venv`.
 4. Web: `cd web` y `npm run dev`. Abrir `http://localhost:4321`.
-5. Producción: `npm run build` y `npm run serve` desde `web/`, detrás de HTTPS.
+5. Producción: `npm run build` y `npm start` desde `web/`, detrás de HTTPS. En Render, ver
+   `docs/DESPLIEGUE_RENDER.md`.
 
 La aplicación ahora necesita un servidor Node: las rutas protegidas y las
 sesiones se resuelven mediante Astro SSR con el adaptador oficial de Node.
@@ -22,9 +23,21 @@ reales. Nunca colocar `DATABASE_URL`, tokens o claves internas en variables
 Web:
 
 - `AUTH_SERVICE_URL`: servicio de usuarios, llamado solo desde el servidor web.
-- `CERTIFACE_API_URL`: API de inferencia, llamada solo desde el servidor web.
+- `AUTH_INTERNAL_API_KEY`: la misma `INTERNAL_API_KEY` del auth-service. Opcional pero
+  recomendada: con ella la web reenvía la IP y el navegador reales de cada usuario
+  (`X-Client-IP`, `X-Client-User-Agent`). Sin ella, el auth-service ve a todos con la IP
+  del servidor web y su rate limit (login 10/min, refresh 30/min por IP) se reparte
+  entre todos los usuarios.
+- `CERTIFACE_API_URL`: motor forense por defecto, llamado solo desde el servidor web. Puede
+  quedar vacía mientras el backend no esté desplegado.
+- `FORENSICS_API_OVERRIDE`: `true` habilita el panel oculto (Ctrl+Alt+Shift+M) para que una
+  sesión con laboratorio use otro motor, por ejemplo el local publicado con un túnel.
+- `FORENSICS_API_OVERRIDE_HOSTS`: dominios HTTPS que el panel acepta en producción.
 - `APP_ORIGIN`: origen público exacto; en desarrollo `http://localhost:4321`.
-- `SESSION_TTL_SECONDS`: duración máxima de la sesión (segundos).
+- `SESSION_TTL_SECONDS`: duración máxima de la sesión desde el login (segundos). Dentro
+  de ese tiempo los tokens se renuevan solos.
+- `TRUSTED_PROXY_COUNT`: proxies delante del servidor web (Render, Nginx: `1`). Con `0`
+  se usa la IP de la conexión.
 - `SESSION_COOKIE_SECURE`: activar con HTTPS. En compilaciones de producción
   siempre se fuerza `Secure`, aunque el entorno local contenga `false`.
 - `ROLE_PERMISSIONS`: objeto JSON de nombres de rol y permisos de CertiFace.
@@ -47,35 +60,44 @@ Backend:
 - `CELERY_RESULT_EXPIRES`: TTL de resultados en segundos.
 
 Reiniciar ambos servicios después de cambiar la política de roles o el entorno.
-La configuración incluye Administrador, Perito e Invitado, y mapea ADMIN y
-GERENTE_GENERAL a administración para mantener la cuenta existente. Esos nombres
-solo están en el entorno; no hay IDs de usuarios, roles o cuentas precargados en
-el código de la aplicación. Los datos visibles provienen del servicio.
+La configuración incluye los roles de Certiface: ADMINISTRADOR (todo, incluida la
+auditoría), PERITO (laboratorio) y ABOGADO (solo su cuenta). Esos nombres solo están
+en el entorno; no hay IDs de usuarios, roles o cuentas precargados en el código de la
+aplicación. Los datos visibles provienen del servicio.
+
+Permisos disponibles: `laboratory`, `users`, `roles`, `audit`, `profile`, `security`.
 
 ## Pantallas
 
-- `/login`, `/recuperar`, `/restablecer`: acceso y recuperación.
+- `/login`: acceso, con un segundo paso para el código si la cuenta tiene verificación
+  en dos pasos.
+- `/recuperar`, `/restablecer` (y `/reset-password`, la ruta por defecto del
+  auth-service): recuperación de contraseña y aceptación de invitaciones.
 - `/app/laboratorio`: análisis, permitido a Administrador y Perito.
-- `/app/usuarios`: listar, buscar, filtrar, crear y editar usuarios.
+- `/app/usuarios`: listar, buscar y filtrar usuarios; crearlos con contraseña o por
+  invitación por correo; editar todos sus datos; suspender por fechas, desbloquear,
+  cerrar sus sesiones, restablecer su verificación en dos pasos y eliminarlos.
 - `/app/roles`: crear, editar y eliminar roles; pestaña de accesos efectivos.
-- `/app/perfil`, `/app/seguridad`: identidad y sesión del usuario activo.
+- `/app/auditoria`: eventos de seguridad del auth-service con filtros y paginación.
+- `/app/perfil`: editar nombre, apellido y teléfono propios.
+- `/app/seguridad`: cambiar la contraseña, activar o desactivar la verificación en dos
+  pasos con QR, ver y cerrar sesiones abiertas, cerrar todas las sesiones.
 
 El sidebar muestra las opciones permitidas. El middleware SSR y las rutas API
 comprueban también el permiso; ocultar un enlace no es la protección. FastAPI
 aplica la misma política al acceder directamente a sus endpoints. El servicio
 central conserva sus propias restricciones, que pueden ser más estrictas.
 
-Los permisos de CertiFace se administran en el entorno, porque el contrato
-recibido no tiene un endpoint para editar permisos. La pestaña Accesos es de
-consulta. Crear un rol remoto no le concede privilegios locales automáticamente.
-Nombre y apellido pueden crearse pero no actualizarse: esa operación no existe
-en el contrato de edición proporcionado.
+Los permisos de CertiFace se administran en el entorno, porque el auth-service no
+gestiona permisos de negocio. La pestaña Accesos es de consulta. Crear un rol remoto no
+le concede privilegios locales automáticamente. Eliminar usuarios y consultar la
+auditoría solo lo permite el auth-service al rol administrador.
 
 ## Sesión y seguridad
 
-El token Bearer nunca se entrega al JavaScript del navegador. Se guarda en la
-sesión de Astro, en el servidor, con un identificador aleatorio en cookie
-HttpOnly + SameSite=Lax. En producción usa Secure y el prefijo `__Host-`.
+Los tokens (access, refresh y el reto MFA) nunca se entregan al JavaScript del
+navegador. Se guardan en la sesión de Astro, en el servidor, con un identificador
+aleatorio en cookie HttpOnly + SameSite=Lax. En producción usa Secure y el prefijo `__Host-`.
 Se regenera el ID al iniciar sesión y se destruye el registro al salir; una
 cookie anterior no permite recuperar la sesión cerrada. Se revalida el perfil
 con el servicio en cada petición protegida: no se aceptan JWT sin firma ni se
@@ -85,8 +107,14 @@ En esta instalación de una sola instancia, el almacén está en `web/.sessions`
 fuera de `public` y de Git. Restringir el acceso al directorio al usuario del
 proceso. Para múltiples réplicas, cambiar el driver a un almacén compartido
 (Redis con TLS, por ejemplo); no replicar archivos de sesión ni servirlos por HTTP.
-El logout revoca la sesión web; el contrato externo no ofrece revocación del JWT
-ni refresh tokens.
+El access token dura 15 minutos. El servidor web lo renueva con el refresh token antes
+de que caduque, así la sesión dura `SESSION_TTL_SECONDS` sin cortes. El auth-service
+rota el refresh token en cada uso y revoca la sesión si alguien reutiliza uno antiguo;
+por eso las peticiones simultáneas de un navegador comparten una única renovación. Esa
+coordinación vive en memoria: con varias réplicas, usar afinidad de sesión.
+
+El logout revoca la sesión también en el auth-service, de modo que su refresh token deja
+de servir. Cambiar la contraseña cierra las demás sesiones y conserva la actual.
 
 Los formularios API requieren el origen configurado, incluso para JSON. Hay
 límites de tamaño, una lista de rutas y campos permitidos, protección CSP,
@@ -120,12 +148,13 @@ La nueva solo se guardó en `backend/.env`.
 
 ## Auditoría y contrato externo
 
-La escritura usa `POST /api/internal/audit`, con el ID externo del usuario y la
+El backend escribe con `POST /api/internal/audit`, con el ID externo del usuario y la
 clave interna del servidor. Sin clave o ante fallos, el evento local queda sin
-sincronizar. El contrato no incluye GET de auditoría, edición de permisos,
-renovación de sesión ni edición autónoma del perfil. No se simulan esas funciones.
-Configurar en el servicio de usuarios que sus correos de recuperación apunten a
-`/restablecer?token=...` de la URL pública de CertiFace.
+sincronizar. La web consulta la auditoría del auth-service en `/app/auditoria`.
+
+En el auth-service, `FRONTEND_URL` debe ser la URL pública de CertiFace para que los
+enlaces de recuperación e invitación funcionen. La ruta puede quedar en
+`/reset-password` (por defecto) o cambiarse a `/restablecer`: la web atiende ambas.
 
 ## Pruebas
 
@@ -139,7 +168,9 @@ npm run build
 ```
 
 Las pruebas HTTP arrancan un servidor externo simulado exclusivamente para
-pruebas. Verifican sesiones, revocación, CSRF y acceso por URL para los tres roles,
-además de roles desconocidos. No se crean usuarios reales durante estas pruebas.
+pruebas, con el contrato real del auth-service. Verifican sesiones, renovación de
+tokens (también con peticiones simultáneas), login con MFA, revocación, mensajes de
+error, reenvío de la IP del cliente, paginación de usuarios, CSRF y acceso por URL para
+los roles configurados y roles desconocidos. No se crean usuarios reales durante estas pruebas.
 La interfaz se verificó con navegador a 1440 px y 390 px, incluyendo filtros,
 formularios laterales, pestañas y navegación móvil.

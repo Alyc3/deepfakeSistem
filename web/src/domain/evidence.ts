@@ -29,13 +29,6 @@ export const MIME_TYPES: Record<string, string> = {
   ".webm": "video/webm",
 };
 
-export const IMAGE_EXTENSIONS = Object.keys(MIME_TYPES).filter((ext) =>
-  MIME_TYPES[ext]!.startsWith("image/"),
-);
-export const VIDEO_EXTENSIONS = Object.keys(MIME_TYPES).filter((ext) =>
-  MIME_TYPES[ext]!.startsWith("video/"),
-);
-
 /** Filtro del selector de archivos del navegador. */
 export const ACCEPT_ATTRIBUTE = Object.keys(MIME_TYPES).join(",");
 

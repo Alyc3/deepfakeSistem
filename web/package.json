@@ -7,23 +7,27 @@
   "description": "Laboratorio pericial de medios digitales en la web: detección de face swap y deepfake para casos de suplantación de identidad",
   "author": "Alyce Maldonado",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.23.4"
+  },
   "scripts": {
     "dev": "astro dev",
-    "start": "astro dev --host",
     "build": "astro build",
+    "start": "node ./dist/server/entry.mjs",
+    "serve": "node --env-file-if-exists=.env ./dist/server/entry.mjs",
     "preview": "astro preview --host",
     "check": "astro check",
-    "test:identity": "node --test tests/identity.test.mjs",
-    "test": "node --test tests/*.test.mjs",
-    "serve": "node --env-file=.env dist/server/entry.mjs"
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@astrojs/node": "^11.1.9",
+    "astro": "^7.1.5",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.5",
     "@types/node": "^26.6.5",
-    "astro": "^7.1.5",
+    "@types/qrcode": "^1.5.5",
     "typescript": "^5.9.3"
-  },
-  "dependencies": {
-    "@astrojs/node": "^11.1.9"
   }
 }

@@ -3,8 +3,9 @@ export const SECTIONS = [
   { id: "casos", permission: "laboratory", label: "Casos y evidencias", group: "Trabajo", icon: "scan", description: "Expedientes y evidencias" },
   { id: "usuarios", permission: "users", label: "Usuarios", group: "Administración", icon: "users", description: "Cuentas y accesos del equipo" },
   { id: "roles", permission: "roles", label: "Roles y accesos", group: "Administración", icon: "shield", description: "Roles del servicio y alcance de acceso" },
+  { id: "auditoria", permission: "audit", label: "Auditoría", group: "Administración", icon: "list", description: "Eventos de seguridad del servicio de usuarios" },
   { id: "perfil", permission: "profile", label: "Mi perfil", group: "Cuenta", icon: "user", description: "Tu identidad en CertiFace" },
-  { id: "seguridad", permission: "security", label: "Seguridad", group: "Cuenta", icon: "lock", description: "Sesión y recuperación de acceso" },
+  { id: "seguridad", permission: "security", label: "Seguridad", group: "Cuenta", icon: "lock", description: "Contraseña, verificación en dos pasos y sesiones" },
 ] as const;
 export type Permission = typeof SECTIONS[number]["permission"];
 export type AccessPolicy = Record<string, Permission[]>;
