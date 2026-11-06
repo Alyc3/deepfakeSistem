@@ -37,7 +37,7 @@ test('analyst has laboratory access and cannot manage accounts', async () => {
 });
 test('administrator reads actual upstream users and roles', async () => {
   const { cookie } = await login('ADMINISTRADOR');
-  const users = await call('/api/identity/users', { headers: { Cookie: cookie } }); assert.equal(users.status, 200); assert.equal((await users.json()).length, server.users.length);
+  const users = await call('/api/identity/users', { headers: { Cookie: cookie } }); assert.equal(users.status, 200); assert.equal((await users.json()).length, server.listed.length);
   assert.equal((await call('/app/roles', { headers: { Cookie: cookie } })).status, 200);
 });
 test('requests without a matching origin are rejected', async () => {

@@ -78,10 +78,6 @@ export interface ArchiveReceipt {
   objects: { id: string; kind: string; sha256: string; size_bytes: number }[];
 }
 
-/** El material era un video (y no una imagen suelta). */
-export const isVideoAnalysis = (result: AnalysisResult): boolean =>
-  Boolean(result.frames_analyzed);
-
 /** Sin rostro detectable el dictamen pierde base metodológica. */
 export const lacksFace = (result: AnalysisResult): boolean =>
   result.faces_detected === 0;

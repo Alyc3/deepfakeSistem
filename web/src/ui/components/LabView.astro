@@ -5,17 +5,19 @@ import Icon from "./Icon.astro";
 import UsersView from "./UsersView.astro";
 import RolesView from "./RolesView.astro";
 import AccountView from "./AccountView.astro";
+import AuditView from "./AuditView.astro";
 import EvidenceChamber from "./EvidenceChamber.astro";
 import AnalysisPanel from "./AnalysisPanel.astro";
 import CasesView from "./CasesView.astro";
-interface Props { user: IdentityUser; permissions: Permission[]; section: string; policy: AccessPolicy; }
-const { user, permissions, section, policy } = Astro.props;
+import EngineConnection from "./EngineConnection.astro";
+interface Props { user: IdentityUser; permissions: Permission[]; section: string; policy: AccessPolicy; engineOverride: boolean; }
+const { user, permissions, section, policy, engineOverride } = Astro.props;
 const available = SECTIONS.filter((item) => permissions.includes(item.permission));
 const active = SECTIONS.find((item) => item.id === section)!;
 const name = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email;
 const initials = name.split(/\s+/).slice(0,2).map((part) => part[0]).join("").toUpperCase();
 ---
-<div id="view-app" class="app-shell" data-section={section} data-user={JSON.stringify(user)}>
+<div id="view-app" class="app-shell" data-section={section} data-user={JSON.stringify(user)} data-permissions={JSON.stringify(permissions)}>
   <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="Cerrar navegación" hidden></button>
   <aside id="app-sidebar" class="app-sidebar" aria-label="Navegación principal">
     <a class="sidebar-brand" href="/app"><span class="brand-mark"></span><span>CertiFace<span class="brand-caption">FORENSIC WORKSPACE</span></span></a>
@@ -33,8 +35,10 @@ const initials = name.split(/\s+/).slice(0,2).map((part) => part[0]).join("").to
       {section === "laboratorio" && <><div class="page-heading"><div><p class="eyebrow">Análisis forense</p><h1>Laboratorio</h1><p class="page-description">De la evidencia al criterio pericial.</p></div><div class="connection-badge"><span id="status-dot" class="status-dot" data-state="unknown"></span><button id="status-text" class="link-button" type="button">Comprobando motor…</button></div></div><div class="workgrid"><EvidenceChamber /><AnalysisPanel /></div></>}
       {section === "usuarios" && <UsersView />}
       {section === "roles" && <RolesView policy={policy} />}
+      {section === "auditoria" && <AuditView />}
       {["perfil", "seguridad"].includes(section) && <AccountView user={user} section={section} />}
     </main>
     <footer class="workspace-footer"><span>CertiFace / Peritaje digital</span><span>Acceso verificado</span></footer>
   </div>
+  {engineOverride && permissions.includes("laboratory") && <EngineConnection />}
 </div>

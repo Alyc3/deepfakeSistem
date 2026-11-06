@@ -16,13 +16,39 @@ import Icon from "./Icon.astro";
   <div class="sheet-header"><div><p class="eyebrow">Equipo</p><h2 id="user-form-title">Nuevo usuario</h2></div><button class="icon-button" type="button" data-close="user-dialog" aria-label="Cerrar"><Icon name="close" /></button></div>
   <form id="identity-user-form" class="sheet-form">
     <input type="hidden" name="id" />
-    <div class="form-grid"><label class="field"><span>Nombre</span><input class="text-input" name="first_name" autocomplete="given-name" /></label><label class="field"><span>Apellido</span><input class="text-input" name="last_name" autocomplete="family-name" /></label></div>
-    <label class="field"><span>Correo electrónico</span><input class="text-input" name="email" type="email" required autocomplete="off" /></label>
-    <label class="field"><span>Contraseña <small id="password-optional"></small></span><input class="text-input" name="password" type="password" autocomplete="new-password" required maxlength="1024" /></label>
+    <div class="form-grid"><label class="field"><span>Nombre</span><input class="text-input" name="first_name" autocomplete="off" maxlength="100" /></label><label class="field"><span>Apellido</span><input class="text-input" name="last_name" autocomplete="off" maxlength="100" /></label></div>
+    <label class="field"><span>Correo electrónico</span><input class="text-input" name="email" type="email" required autocomplete="off" maxlength="254" /></label>
+    <label class="field"><span>Contraseña <small id="password-optional"></small></span><input class="text-input" name="password" type="password" autocomplete="new-password" maxlength="128" /></label>
+    <p id="password-hint" class="field-hint">Déjala vacía para enviar una invitación por correo: la persona elegirá su propia contraseña.</p>
     <div class="form-grid"><label class="field"><span>Rol</span><select class="text-input" name="role_name" required></select></label><label class="field"><span>Estado</span><select class="text-input" name="status" required></select></label></div>
-    <label class="field"><span>Identificación</span><input class="text-input" name="identifier" /></label>
-    <label class="field"><span>Teléfono</span><input class="text-input" name="phone_number" type="tel" autocomplete="tel" /></label>
+    <div class="form-grid"><label class="field"><span>Identificación</span><input class="text-input" name="identifier" maxlength="50" autocomplete="off" /></label><label class="field"><span>Teléfono</span><input class="text-input" name="phone_number" type="tel" autocomplete="off" maxlength="30" placeholder="+593 99 999 9999" /></label></div>
     <p id="user-form-message" class="form-error" role="alert" hidden></p>
     <div class="sheet-actions"><button class="ghost-button" type="button" data-close="user-dialog">Cancelar</button><button class="primary-button" type="submit">Guardar usuario</button></div>
   </form>
+  <section id="user-account-actions" class="sheet-form account-actions" hidden aria-labelledby="user-actions-title">
+    <h3 id="user-actions-title" class="mono-label">Acciones sobre la cuenta</h3>
+    <p id="user-account-state" class="field-hint"></p>
+    <div class="account-action-list">
+      <button id="user-unlock" class="ghost-button" type="button">Desbloquear</button>
+      <button id="user-suspend" class="ghost-button" type="button">Suspender…</button>
+      <button id="user-revoke-sessions" class="ghost-button" type="button">Cerrar sus sesiones</button>
+      <button id="user-reset-mfa" class="ghost-button" type="button">Restablecer verificación en dos pasos</button>
+      <button id="user-delete" class="ghost-button danger-action" type="button">Eliminar usuario</button>
+    </div>
+    <p id="user-action-message" class="form-error" role="alert" hidden></p>
+  </section>
+</dialog>
+<dialog id="suspend-dialog" class="confirm-dialog" aria-labelledby="suspend-title">
+  <Icon name="lock" size={30} /><h2 id="suspend-title">Suspender cuenta</h2>
+  <p>Durante el periodo indicado la persona no podrá iniciar sesión y sus sesiones abiertas dejarán de funcionar.</p>
+  <form id="suspend-form" class="sheet-form compact-form">
+    <div class="form-grid"><label class="field"><span>Desde</span><input class="text-input" name="from" type="datetime-local" required /></label><label class="field"><span>Hasta</span><input class="text-input" name="until" type="datetime-local" required /></label></div>
+    <p id="suspend-message" class="form-error" role="alert" hidden></p>
+    <div class="sheet-actions"><button id="suspend-lift" class="ghost-button" type="button" hidden>Levantar suspensión</button><button class="ghost-button" type="button" data-close="suspend-dialog">Cancelar</button><button class="primary-button" type="submit">Suspender</button></div>
+  </form>
+</dialog>
+<dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title">
+  <Icon name="shield" size={30} /><h2 id="confirm-title">Confirmar</h2><p id="confirm-description"></p>
+  <p id="confirm-message" class="form-error" role="alert" hidden></p>
+  <div class="sheet-actions"><button class="ghost-button" type="button" data-close="confirm-dialog">Cancelar</button><button id="confirm-accept" class="primary-button" type="button">Confirmar</button></div>
 </dialog>

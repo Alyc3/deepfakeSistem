@@ -2,9 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
-const source = readFileSync(new URL('../src/infrastructure/http/http-identity.ts', import.meta.url), 'utf8');
-const compiled = ts.transpileModule(source, {compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
-const {createHttpIdentity} = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const compile = (path) => ts.transpileModule(readFileSync(new URL(path, import.meta.url), 'utf8'), {compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+const asModule = (code) => `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
+// El adaptador importa el dominio por alias; en la prueba se sustituye por el módulo compilado.
+const domain = asModule(compile('../src/domain/identity.ts'));
+const {createHttpIdentity} = await import(asModule(compile('../src/infrastructure/http/http-identity.ts').replaceAll('"@domain/identity"', `"${domain}"`)));
 globalThis.window = new EventTarget();
 const user = {id:'test-user',email:'analyst@example.test',status:'ACTIVO',role:{id:'test-role',name:'PERITO'}};
 test('browser uses same-origin cookies and never needs an access token', async () => {
@@ -27,4 +29,19 @@ test('logout waits for server revocation',async()=>{
  const identity=createHttpIdentity();identity.hydrate(user);
  globalThis.fetch=async(url,options)=>{assert.equal(url,'/api/identity/auth/logout');assert.equal(options.method,'POST');return new Response(null,{status:204});};
  await identity.logout();assert.equal(identity.current(),null);
+});
+test('two-step login reports the pending code without a profile',async()=>{
+ const identity=createHttpIdentity();
+ globalThis.fetch=async()=>Response.json({mfa_required:true});
+ assert.deepEqual(await identity.login(user.email,'fixture-password'),{mfaRequired:true});assert.equal(identity.current(),null);
+});
+test('a wrong code is not treated as an expired session',async()=>{
+ const identity=createHttpIdentity();let expired=false;window.addEventListener('certiface:session-expired',()=>expired=true,{once:true});
+ globalThis.fetch=async()=>Response.json({detail:'Código de verificación inválido'},{status:401});
+ await assert.rejects(identity.verifyMfa('000000'),/Código de verificación inválido/);assert.equal(expired,false);
+});
+test('password policy reasons are kept on the error',async()=>{
+ const identity=createHttpIdentity();
+ globalThis.fetch=async()=>Response.json({detail:'La contraseña no cumple la política',errors:['Debe tener al menos 8 caracteres']},{status:422});
+ await assert.rejects(identity.resetPassword('token','corta'),(error)=>error.status===422&&error.errors[0]==='Debe tener al menos 8 caracteres');
 });
