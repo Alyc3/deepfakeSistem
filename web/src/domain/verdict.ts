@@ -46,10 +46,11 @@ export const pctOf = (value: number): string => `${(value * 100).toFixed(1)}%`;
  * Compartida por el desglose del dictamen y la leyenda del mapa de calor: la
  * señal que fija el dictamen va siempre primera y marcada con ▸.
  */
-export function signalLegend(signals: Record<string, number>): string {
-  return Object.entries(signals)
-    .filter(([key]) => MODEL_NAMES[key])
-    .sort((a, b) => b[1] - a[1])
-    .map(([key, value], index) => `${index === 0 ? "▸ " : ""}${MODEL_NAMES[key]} ${pctOf(value)}`)
-    .join(" · ");
+export function signalLegend(signals: Record<string, number>, decisive?: readonly string[]): string {
+  const known = Object.entries(signals).filter(([key]) => MODEL_NAMES[key]).sort((a, b) => b[1] - a[1]);
+  const ruling = decisive ? known.filter(([key]) => decisive.includes(key)) : known;
+  const advisory = decisive ? known.filter(([key]) => !decisive.includes(key)) : [];
+  const line = ruling.map(([key, value], index) => `${index === 0 ? "▸ " : ""}${MODEL_NAMES[key]} ${pctOf(value)}`).join(" · ");
+  if (!advisory.length) return line;
+  return `${line} · orientativos: ${advisory.map(([key, value]) => `${MODEL_NAMES[key]} ${pctOf(value)}`).join(" · ")}`;
 }

@@ -165,8 +165,15 @@ def run_inference(data: bytes, mime: str, progress_callback=None) -> dict:
                 progress_callback("inference", "Ejecutando los modelos sobre los fotogramas", total=len(frames))
             return predict_video(frames, progress_callback=(
                 lambda current, total, second, face, signal: progress_callback(
-                    "inference", f"Fotograma {current}/{total} · {second:.1f} s · rostro {'detectado' if face else 'no detectado'} · señal {signal:.1%}",
+                    "inference", f"Fotograma {current}/{total} · "
+                    + (f"{second:.1f} s · " if second is not None else "")
+                    + (f"rostro detectado · face swap {signal:.1%}" if face else "sin rostro"),
                     current=current, total=total, event_id=f"frame-{current}"
+                )
+            ) if progress_callback else None, scene_callback=(
+                lambda current, total: progress_callback(
+                    "scene", f"Sonda de escena {current}/{total} · examinando el encuadre completo",
+                    current=current, total=total, event_id=f"scene-{current}"
                 )
             ) if progress_callback else None)
         if progress_callback:

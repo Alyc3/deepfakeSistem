@@ -68,7 +68,18 @@ export interface AnalysisResult {
   frames_analyzed?: number;
   frame_scores?: number[];
   suspicious_seconds?: SuspiciousSecond[];
+  /**
+   * Solo en video: detectores que deciden el dictamen. El resto de `models`
+   * es orientativo (se informa, pero no dictamina).
+   */
+  decisive_models?: string[];
+  /** Solo en video: lectura de la sonda de escena en cada encuadre sondeado. */
+  scene_probes?: { index: number; second: number | null; score: number }[];
 }
+
+/** ¿Decide este detector el dictamen? Sin lista (imágenes), deciden todos. */
+export const isDecisive = (result: AnalysisResult, key: string): boolean =>
+  !result.decisive_models || result.decisive_models.includes(key);
 
 export interface ArchiveReceipt {
   case_id: string;

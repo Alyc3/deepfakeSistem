@@ -10,6 +10,14 @@ from torchvision import transforms
 
 from app import diffusion_model, explain, faceswap_model, scene_model
 from app.preprocessing import crop_largest_face
+from app.video_rule import (
+    DECISIVE_VIDEO_DETECTORS,
+    SCENE_PROBES,
+    SCENE_REAL_LIMIT,
+    SWAP_SUSTAIN_FRAMES,
+    sustained_level,
+    video_verdict,
+)
 
 logger = logging.getLogger("certiface.model")
 
@@ -125,9 +133,8 @@ def _verdict(p_fake: float):
 
 
 # La sonda de escena (SigLIP2+DINOv2 sobre el encuadre completo) es el
-# modelo más caro del sistema (~27 s por imagen en CPU), así que solo se
-# invoca para resolver ambigüedades, y sobre este número de fotogramas.
-SCENE_PROBES = 2
+# modelo más caro del sistema (~20-27 s por imagen en CPU). SCENE_PROBES
+# (app.video_rule) fija cuántos encuadres se sondean como máximo.
 
 
 def _scene_probe(images):
@@ -317,48 +324,58 @@ def predict_image(image_bytes: bytes):
 
 SUSPECT_THRESHOLD = 0.6  # umbral para señalar un fotograma al perito
 
+def _video_scene_probes(frames, pool, scene_callback=None):
+    """Sonda de escena sobre SCENE_PROBES fotogramas repartidos de `pool`.
 
-def predict_video(frames, progress_callback=None):
+    pool: índices de fotogramas candidatos. Mismo muestreo que _scene_probe.
+    Devuelve [(índice, puntuación)]; una sonda que falla se omite.
+    """
+    picks = list(pool)
+    if len(picks) > SCENE_PROBES:
+        picks = picks[::len(picks) // SCENE_PROBES][:SCENE_PROBES]
+    readings = []
+    for number, index in enumerate(picks, 1):
+        if scene_callback:
+            scene_callback(number, len(picks))
+        try:
+            readings.append((index, scene_model.fake_probability(frames[index][0])))
+        except Exception:
+            logger.exception("Falló la sonda de escena en el fotograma %d; se omite.", index + 1)
+    return readings
+
+
+def predict_video(frames, progress_callback=None, scene_callback=None):
     gan_scores = []
     swap_scores = []
     diff_scores = []
-    context_candidates = []  # encuadres completos donde el rostro no domina
+    found_flags = []
+    context_indices = []  # fotogramas donde el rostro no domina el encuadre
     suspects = []
-    faces_found = 0
     bboxes = []       # caja facial de cada fotograma (para su mapa de calor)
     frame_cams = []   # CAM de cada fotograma, capturados durante la inferencia
-    # Índice del fotograma más incriminatorio: el que encabeza la evidencia.
-    best_index = 0
-    best_signal = -1.0
 
     # Los CAM se congelan al vuelo mientras los peritos puntúan: así el mapa
     # de los 24 fotogramas no cuesta una segunda pasada de inferencia.
     with explain.capture_facial_cams() as capture:
         for i, (frame, timestamp) in enumerate(frames):
             face, found, bbox = crop_largest_face(frame)
-            faces_found += int(found)
             p_gan = _fake_probability(face)
             p_swap = faceswap_model.fake_probability(face)
             p_diff = diffusion_model.fake_probability(face)
             gan_scores.append(p_gan)
             swap_scores.append(p_swap)
             diff_scores.append(p_diff)
+            found_flags.append(found)
             bboxes.append(bbox)
             frame_cams.append(capture.snapshot(face.size))
-            signal = max(p_gan, p_swap, p_diff)
-            if signal > best_signal:
-                best_signal, best_index = signal, i
             if found:
                 face_fraction = (face.width * face.height) / (frame.width * frame.height)
                 if face_fraction <= CONTEXT_FACE_MAX_FRACTION:
-                    context_candidates.append(frame)
-            # Solo el detector de face swap alimenta la lista de sospechosos:
-            # el B0 está fuera de su dominio en fotogramas de video "salvajes"
-            # y sus picos aislados ahí son ruido (verificado con video
-            # auténtico), no indicios revisables. La generación por difusión
-            # afecta a todo el video por igual, así que tampoco tiene
-            # "momentos" que señalar.
-            if p_swap > SUSPECT_THRESHOLD and timestamp is not None:
+                    context_indices.append(i)
+            # Solo el face swap señala momentos, y solo con rostro: sin rostro
+            # el B7 mira el fotograma entero (rótulos, cortinillas) y su
+            # lectura no es un indicio revisable.
+            if found and p_swap > SUSPECT_THRESHOLD and timestamp is not None:
                 suspects.append({"second": timestamp, "score": round(p_swap, 4)})
             logger.info(
                 "Fotograma %d/%d (t=%ss): rostro=%s p_gan=%.4f p_swap=%.4f p_diff=%.4f",
@@ -367,80 +384,85 @@ def predict_video(frames, progress_callback=None):
                 p_gan, p_swap, p_diff,
             )
             if progress_callback:
-                progress_callback(i + 1, len(frames), timestamp, found, signal)
+                progress_callback(i + 1, len(frames), timestamp, found,
+                                  p_swap if found else 0.0)
 
-    # GAN y difusión: mediana. La generación afecta a todos los fotogramas
-    # por igual, así que el valor central es el representativo; la mediana
-    # resiste la minoría de fotogramas atípicos en ambas direcciones (picos
-    # de ruido en video auténtico, valles por caras pequeñas o desenfoque en
-    # video generado), cosa que la media no hacía. Face swap: segundo máximo,
-    # porque sus artefactos son intermitentes y exigimos dos detecciones
-    # independientes.
-    med_gan = median(gan_scores)
-    agg_swap = faceswap_model.aggregate_video(swap_scores)
-    med_diff = median(diff_scores)
-    p_fake = max(med_gan, agg_swap, med_diff)
-    label, confidence = _verdict(p_fake)
-    label, caveat, ctx, conf_override = _resolve_reservation(
-        label, med_gan, agg_swap, med_diff, context_candidates,
-        min_eligible=CONTEXT_MIN_FRAMES,
-    )
-    if conf_override is not None:
-        confidence = conf_override
-    if not caveat and ctx is None:
-        # Verificación final: todo "Real" en video pasa por la sonda de
-        # escena. Se prefieren encuadres donde el rostro no domina; en un
-        # primer plano se sondea el fotograma tal cual — no distingue
-        # entorno, pero aporta la opinión de un modelo independiente
-        # entrenado en otra distribución, capaz de ver lo que los
-        # detectores faciales no ven (verificado: un fake en primer plano
-        # pasó como Real con los tres detectores faciales en silencio).
-        label, confidence, caveat, ctx = _verify_real(
-            label, confidence, max(med_diff, med_gan),
-            context_candidates or [frame for frame, _ts in frames],
-        )
+    faces_found = sum(found_flags)
+    # Face swap: continuidad sobre los fotogramas CON rostro, en orden.
+    face_swaps = [s for s, f in zip(swap_scores, found_flags) if f]
+    swap_sustained = sustained_level(face_swaps, SWAP_SUSTAIN_FRAMES)
+    swap_pair = sustained_level(face_swaps, 2)
+
+    # Escena: se prefieren encuadres donde el rostro no domina; en un primer
+    # plano se sondea el fotograma tal cual (no distingue entorno, pero es la
+    # opinión de un modelo independiente).
+    readings = _video_scene_probes(frames, context_indices or range(len(frames)), scene_callback)
+    scene = median([score for _, score in readings]) if readings else None
+
+    # GAN y difusión: mediana sobre los fotogramas con rostro. No condenan
+    # (ver la calibración junto a SWAP_FRAME_LIMIT); la GAN solo actúa como
+    # salvaguarda contra certificar autenticidad.
+    gan_faces = [g for g, f in zip(gan_scores, found_flags) if f] or gan_scores
+    diff_faces = [d for d, f in zip(diff_scores, found_flags) if f] or diff_scores
+    med_gan = median(gan_faces)
+    med_diff = median(diff_faces)
+
+    label, confidence, caveat = video_verdict(scene, swap_sustained, swap_pair, med_gan)
 
     logger.info(
-        "Video: %d fotogramas, %d con rostro | GAN mediana=%.4f | "
-        "swap 2º máx=%.4f (máx=%.4f) | difusión mediana=%.4f | "
-        "%d sospechosos → %s (%.2f%%)%s",
-        len(frames), faces_found, med_gan, agg_swap, max(swap_scores),
-        med_diff, len(suspects), label, confidence,
+        "Video: %d fotogramas, %d con rostro | face swap sostenido=%.4f "
+        "(pareja=%.4f) | escena mediana=%s en %d sondas | orientativos: "
+        "GAN=%.4f difusión=%.4f → %s (%.2f%%)%s",
+        len(frames), faces_found, swap_sustained, swap_pair,
+        "—" if scene is None else f"{scene:.4f}", len(readings),
+        med_gan, med_diff, label, confidence,
         " [con reserva]" if caveat else "",
     )
     if faces_found == 0:
         logger.warning(
             "Ningún fotograma tenía rostro detectable: el veredicto se emitió "
-            "sobre fotogramas completos y pierde fiabilidad."
+            "solo con la sonda de escena y pierde fiabilidad."
         )
 
+    # Señal por fotograma = la del detector que decide fotograma a fotograma.
+    frame_signal = [s if f else 0.0 for s, f in zip(swap_scores, found_flags)]
+    models = {
+        "synthesis_gan": round(med_gan, 4),
+        "faceswap_dfdc": round(swap_sustained, 4),
+        "diffusion_modern": round(med_diff, 4),
+    }
+    if scene is not None:
+        models["scene_generated"] = round(scene, 4)
     result = {
         "prediction": label,
         "confidence": confidence,
         "frames_analyzed": len(frames),
         "faces_detected": faces_found,
-        "frame_scores": [
-            round(max(g, s, d), 4)
-            for g, s, d in zip(gan_scores, swap_scores, diff_scores)
-        ],
+        "frame_scores": [round(v, 4) for v in frame_signal],
         "suspicious_seconds": suspects,
-        "models": {
-            "synthesis_gan": round(med_gan, 4),
-            "faceswap_dfdc": round(agg_swap, 4),
-            "diffusion_modern": round(med_diff, 4),
-        },
+        "models": models,
+        "decisive_models": [k for k in DECISIVE_VIDEO_DETECTORS if k in models],
+        "scene_probes": [{"index": i, "second": frames[i][1], "score": round(s, 4)} for i, s in readings],
     }
-    if ctx is not None:
-        result["models"]["scene_generated"] = round(ctx, 4)
     if caveat:
         result["caveat"] = caveat
 
+    # Fotograma destacado: el que mejor ilustra lo que decidió. Con condena
+    # (o duda) por escena, la sonda más alta; si no, el mayor disparo de face
+    # swap con rostro.
+    scene_led = scene is not None and scene >= max(swap_sustained, SCENE_REAL_LIMIT)
+    if scene_led and readings:
+        best_index, featured_scene = max(readings, key=lambda item: item[1])
+    else:
+        best_index = max(range(len(frames)), key=lambda i: frame_signal[i])
+        featured_scene = scene
+
     # Mapa de calor explicativo: uno por cada fotograma analizado más el
-    # destacado (el de mayor señal). Un fallo aquí nunca afecta al veredicto.
+    # destacado. Un fallo aquí nunca afecta al veredicto.
     try:
         explanation = _video_explanation(
-            frames, bboxes, frame_cams,
-            gan_scores, swap_scores, diff_scores, best_index, ctx,
+            frames, bboxes, frame_cams, frame_signal, found_flags, best_index,
+            featured_scene,
         )
         if explanation:
             result["explanation"] = explanation
@@ -455,28 +477,23 @@ def predict_video(frames, progress_callback=None):
     return result
 
 
-def _video_explanation(frames, bboxes, frame_cams, gan_scores, swap_scores,
-                       diff_scores, best_index, ctx):
+def _video_explanation(frames, bboxes, frame_cams, frame_signal, found_flags,
+                       best_index, scene):
     """Mapas de calor del video: uno por fotograma, más el destacado.
 
-    Cada fotograma se colorea con **sus propios** scores como pesos, así que
-    la tira muestra cómo evoluciona la atención de los peritos a lo largo del
-    video. La lectura de la sonda de escena es global (se tomó sobre dos
-    sondas, no por fotograma), de modo que solo entra en el mapa destacado.
+    Cada fotograma se colorea con el detector que decide fotograma a
+    fotograma (face swap) y con su propia puntuación, así que la tira muestra
+    dónde y cuándo se sostiene el intercambio. GAN y difusión no pintan: en
+    la calibración teñían de rojo el 97 % de los videos auténticos. La sonda
+    de escena es una lectura de encuadre completo y solo entra en el
+    destacado.
     """
-    def weights_at(i):
-        return {
-            "synthesis_gan": gan_scores[i],
-            "faceswap_dfdc": swap_scores[i],
-            "diffusion_modern": diff_scores[i],
-        }
-
     strip = []
     for i, (frame, timestamp) in enumerate(frames):
         try:
             entry = explain.build_explanation(
-                frame, bboxes[i], weights_at(i), second=timestamp,
-                facial_cams=frame_cams[i], with_scene=False,
+                frame, bboxes[i], {"faceswap_dfdc": frame_signal[i]},
+                second=timestamp, facial_cams=frame_cams[i], with_scene=False,
                 max_side=explain.FRAME_MAX_SIDE,
                 quality=explain.FRAME_JPEG_QUALITY,
             )
@@ -486,14 +503,12 @@ def _video_explanation(frames, bboxes, frame_cams, gan_scores, swap_scores,
         if entry is None:
             continue
         entry["index"] = i
-        entry["signal"] = round(
-            max(gan_scores[i], swap_scores[i], diff_scores[i]), 4
-        )
+        entry["signal"] = round(frame_signal[i], 4)
         strip.append(entry)
 
-    featured_weights = weights_at(best_index)
-    if ctx is not None:
-        featured_weights["scene_generated"] = ctx
+    featured_weights = {"faceswap_dfdc": frame_signal[best_index]}
+    if scene is not None:
+        featured_weights["scene_generated"] = scene
     featured = explain.build_explanation(
         frames[best_index][0], bboxes[best_index], featured_weights,
         second=frames[best_index][1], facial_cams=frame_cams[best_index],
