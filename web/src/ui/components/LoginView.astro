@@ -1,64 +1,60 @@
 ---
-/** Vista 2 — Acceso: identificación del perito antes de abrir el laboratorio. */
+/**
+ * Vista 2 — Acceso. A la izquierda, la pieza del laboratorio: un rostro bajo
+ * una línea de escaneo que acompaña cada paso del acceso (comprueba, verifica
+ * y, al entrar, se vuelve verde). A la derecha, el formulario.
+ */
 ---
 
-<section id="view-login" class="view view-login">
-  <div class="login-card">
-    <img src="/assets/art/reticle.svg" alt="" class="login-reticle" aria-hidden="true" />
-    <p class="eyebrow">Tu espacio de trabajo</p>
-    <h1 id="login-title" class="login-title">Hola de nuevo</h1>
-    <p id="login-hint" class="login-hint">
-      Accede con tu cuenta institucional.
-    </p>
+<section id="view-login" class="view view-login auth" data-state="idle">
+  <aside class="auth-art" aria-hidden="true">
+    <a class="auth-brand" href="/" tabindex="-1">
+      <img src="/assets/art/logo-mark.webp" alt="" width="28" height="28" />
+      <span>CertiFace</span>
+    </a>
+    <figure class="auth-specimen">
+      <img class="auth-face" src="/assets/art/login-face.webp" alt="" width="727" height="760" decoding="async" fetchpriority="high" />
+      <span class="auth-scan"></span>
+    </figure>
+    <p class="auth-caption"><span class="auth-dot"></span><span id="auth-caption-text">Laboratorio en línea</span></p>
+  </aside>
 
-    <form id="login-form" class="login-form">
+  <div class="auth-panel">
+    <div class="auth-box">
+      <h1 id="login-title" class="auth-title">Hola de nuevo</h1>
+      <p id="login-hint" class="auth-hint">Accede con tu cuenta institucional.</p>
 
-      <label class="field">
-        <span class="mono-label">Correo electrónico</span>
-        <input
-          id="login-user"
-          class="text-input"
-          type="email"
-          autocomplete="username"
-          spellcheck="false"
-          required
-        />
-      </label>
-      <label class="field">
-        <span class="mono-label">Clave</span>
-        <input
-          id="login-pass"
-          class="text-input"
-          type="password"
-          autocomplete="current-password"
-          required
-        />
-      </label>
-      <p id="login-error" class="login-error" role="alert" hidden></p>
-      <button id="login-submit" class="primary-button" type="submit">
-        Iniciar sesión
-      </button>
-    </form>
+      <form id="login-form" class="auth-form" novalidate>
+        <label class="field">
+          <span class="mono-label">Correo electrónico</span>
+          <input id="login-user" class="text-input" type="email" autocomplete="username" spellcheck="false" required />
+        </label>
+        <label class="field">
+          <span class="mono-label">Contraseña</span>
+          <span class="auth-password">
+            <input id="login-pass" class="text-input" type="password" autocomplete="current-password" required />
+            <button id="login-reveal" class="auth-reveal" type="button" aria-controls="login-pass" aria-pressed="false">Ver</button>
+          </span>
+        </label>
+        <p id="login-error" class="login-error" role="alert" hidden></p>
+        <button id="login-submit" class="primary-button auth-submit" type="submit">Iniciar sesión</button>
+      </form>
 
-    <!-- Segundo paso: solo aparece si la cuenta tiene verificación en dos pasos. -->
-    <form id="mfa-form" class="login-form" hidden>
-      <label class="field">
-        <span class="mono-label">Código de verificación</span>
-        <input
-          id="mfa-code"
-          class="text-input"
-          inputmode="numeric"
-          autocomplete="one-time-code"
-          pattern="[0-9 ]{6,8}"
-          maxlength="8"
-          required
-        />
-      </label>
-      <p id="mfa-error" class="login-error" role="alert" hidden></p>
-      <button id="mfa-submit" class="primary-button" type="submit">Verificar código</button>
-      <button id="mfa-cancel" class="link-button" type="button">← Usar otra cuenta</button>
-    </form>
+      <!-- Segundo paso: solo aparece si la cuenta tiene verificación en dos pasos. -->
+      <form id="mfa-form" class="auth-form" hidden novalidate>
+        <label class="field">
+          <span class="mono-label">Código de verificación</span>
+          <input id="mfa-code" class="text-input auth-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}" maxlength="8" required />
+        </label>
+        <p id="mfa-error" class="login-error" role="alert" hidden></p>
+        <button id="mfa-submit" class="primary-button auth-submit" type="submit">Verificar código</button>
+        <button id="mfa-cancel" class="link-button auth-back" type="button">← Usar otra cuenta</button>
+      </form>
 
-    <div id="login-links" class="login-links"><a class="link-button" href="/">← Volver</a><a class="link-button" href="/recuperar">Olvidé mi contraseña</a></div>
+      <div class="auth-progress" aria-hidden="true"><span></span></div>
+      <p id="login-status" class="auth-status" role="status" aria-live="polite"></p>
+
+      <div id="login-links" class="login-links"><a class="link-button" href="/">← Volver</a><a class="link-button" href="/recuperar">¿Olvidaste tu contraseña?</a></div>
+    </div>
   </div>
 </section>
