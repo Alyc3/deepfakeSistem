@@ -196,8 +196,9 @@ class SectionTitle(Flowable):
 class ScoreBar(Flowable):
     """Barra horizontal con el color de la escala de riesgo."""
 
-    def __init__(self, value: Any, width: float, height: float = 2.2 * mm):
+    def __init__(self, value: Any, width: float, height: float = 2.2 * mm, muted: bool = False):
         super().__init__()
+        self.muted = muted  # señal orientativa: gris, para no leerse como alarma
         try:
             self.value = min(max(float(value), 0.0), 1.0)
         except (TypeError, ValueError):
@@ -211,7 +212,7 @@ class ScoreBar(Flowable):
         c.setLineWidth(0.4)
         c.rect(0, 0, self.width, self.height, fill=1, stroke=1)
         if self.value > 0:
-            c.setFillColor(_risk_color(self.value))
+            c.setFillColor(MUTED if self.muted else _risk_color(self.value))
             c.rect(0, 0, self.width * self.value, self.height, fill=1, stroke=0)
         c.setStrokeColor(MUTED)
         c.setLineWidth(0.5)
@@ -372,15 +373,29 @@ def _verdict_panel(result: dict) -> list[Flowable]:
     return story
 
 
-def _models_table(models: dict) -> Table:
-    winner = max(models, key=lambda key: models[key] or 0) if models else None
+# En video la regla de dictamen (app/video_rule.py) usa el face swap SOSTENIDO
+# y la sonda de escena; GAN y difusión quedan como orientativas.
+VIDEO_DETAILS = {
+    "faceswap_dfdc": "Intercambio de rostro sostenido en 3 fotogramas seguidos",
+    "scene_generated": "Generación en el encuadre completo (mediana de las sondas)",
+}
+
+
+def _models_table(models: dict, decisive=None) -> Table:
+    pool = [key for key in models if key in decisive] if decisive else list(models)
+    winner = max(pool, key=lambda key: models[key] or 0) if pool else None
     rows = [[Paragraph("DETECTOR", S["th"]), Paragraph("ESPECIALIDAD", S["th"]), Paragraph("SEÑAL", S["th"]), ""]]
     for key, score in models.items():
         name, detail = MODELS.get(key, (key, ""))
+        if decisive:
+            detail = VIDEO_DETAILS.get(key, detail) if key in decisive else f"{detail} · orientativo"
+        advisory = bool(decisive) and key not in decisive
+        plain = S["body_muted"] if advisory else S["td"]
         label = Paragraph(escape(name), _style("winner", "display_medium", 8.5, ORANGE, 10.5)) if key == winner \
-            else Paragraph(escape(name), S["td"])
+            else Paragraph(escape(name), plain)
         rows.append([label, Paragraph(escape(detail), S["body_muted"]),
-                     ScoreBar(score, 42 * mm), Paragraph(_percent(score), _style("pct", "mono_medium", 8, INK, 10, alignment=TA_RIGHT))])
+                     ScoreBar(score, 42 * mm, muted=advisory),
+                     Paragraph(_percent(score), _style("pct", "mono_medium", 8, MUTED if advisory else INK, 10, alignment=TA_RIGHT))])
     table = Table(rows, colWidths=[36 * mm, CONTENT_W - 36 * mm - 46 * mm - 16 * mm, 46 * mm, 16 * mm])
     table.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LINEBELOW", (0, 0), (-1, -1), 0.4, RULE),
@@ -409,7 +424,7 @@ def _featured(explanation: dict) -> list[Flowable]:
                       "amarillo, naranja y rojo, intensidad creciente. El recuadro naranja marca el rostro analizado.", S["small"])]
 
 
-def _frames_grid(explanation: dict) -> list[Flowable]:
+def _frames_grid(explanation: dict, swap_only: bool = False) -> list[Flowable]:
     frames = explanation.get("frames") or []
     featured = explanation.get("featured_index")
     columns = 4
@@ -456,9 +471,11 @@ def _frames_grid(explanation: dict) -> list[Flowable]:
         commands.append(("BOX", cell, cell, 1, ORANGE))
     grid.setStyle(TableStyle(commands))
     high = sum(1 for frame in frames if (frame.get("signal") or 0) >= 0.5)
+    source = ("la señal del detector de face swap sobre el rostro (0 % si no hay rostro)" if swap_only
+              else "la señal máxima de los detectores faciales en el fotograma")
     intro = (f"Se analizaron {len(frames)} fotogramas repartidos a lo largo del video. Cada lámina muestra el mapa de calor de "
-             f"ese instante, coloreado con su propia señal; el punto y el porcentaje resumen la señal máxima de los detectores "
-             f"faciales en el fotograma. {high} de {len(frames)} superan el umbral de decisión (50 %).")
+             f"ese instante, coloreado con su propia señal; el punto y el porcentaje resumen {source}. "
+             f"{high} de {len(frames)} superan el umbral de decisión (50 %).")
     if featured is not None:
         intro += " El recuadro naranja señala el fotograma destacado."
     return [Paragraph(escape(intro), S["body_muted"]), Spacer(1, 3 * mm), grid]
@@ -597,16 +614,21 @@ def build_forensic_pdf(*, case: Any, evidence: Any, report_id: str, result: dict
                   "custodia; cualquier alteración posterior de la evidencia cambiaría estas huellas.", S["small"]), keep=True)
 
     models = result.get("models") or {}
+    decisive = result.get("decisive_models")
     if models:
-        section("Señales por detector", _models_table(models), Spacer(1, 2 * mm),
-                Paragraph("La barra muestra la probabilidad de manipulación de cada detector; la línea vertical marca el umbral de "
-                          "decisión (50 %). En naranja, el detector con la señal decisoria.", S["small"]), keep=True)
+        note = ("La barra muestra la probabilidad de manipulación de cada detector; la línea vertical marca el umbral de "
+                "decisión (50 %). En naranja, el detector con la señal decisoria.")
+        if decisive:
+            note += (" En video deciden el face swap sostenido y la sonda de escena. Los detectores orientativos se informan "
+                     "pero no dictaminan: en material recomprimido o con filtros de redes sociales dan falsas alarmas.")
+        section("Señales por detector", _models_table(models, decisive), Spacer(1, 2 * mm),
+                Paragraph(note, S["small"]), keep=True)
 
     if explanation:
         section("Mapa de calor destacado", *_featured(explanation))
     if explanation.get("frames"):
         # Título, introducción y cuadrícula juntos: 24 láminas caben en una página.
-        section("Secuencia de fotogramas analizados", *_frames_grid(explanation), keep=True)
+        section("Secuencia de fotogramas analizados", *_frames_grid(explanation, swap_only=bool(decisive)), keep=True)
     if result.get("frames_analyzed", 1) > 1 or result.get("suspicious_seconds"):
         section("Momentos sospechosos", *_suspicious(result), keep=True)
     section("Observaciones y conclusión del perito", *_conclusions(expert_conclusions, perito))

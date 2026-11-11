@@ -384,9 +384,11 @@ CSP estricta (`connect-src 'self'`), `nosniff`, `Referrer-Policy: no-referrer`,
 > diagrama de flujo) y el catálogo de modelos con su Nombre Estándar.
 
 El sistema usa **tres peritos faciales complementarios más una sonda de
-escena** — cada uno especialista en una familia de manipulación — y el
-veredicto lo decide el que más alarma levante, con la sonda como segunda
-opinión sobre el encuadre completo:
+escena**, cada uno especialista en una familia de manipulación. En video el
+dictamen lo deciden el **face swap sostenido** y la **sonda de escena**
+(calibrados con un catálogo etiquetado; ver «Calibración» más abajo); GAN y
+difusión se informan como orientativos. En imágenes decide el que más alarma
+levante, con la sonda como segunda opinión sobre el encuadre completo:
 
 | | Perito 1: síntesis GAN | Perito 2: face swap | Perito 3: difusión moderna | Sonda de escena |
 |---|---|---|---|---|
@@ -397,34 +399,63 @@ opinión sobre el encuadre completo:
 | Pesos | `Detector_De_Sintesis_GAN.pth` (16 MB) | `Detector_De_Face_Swap.pth` (267 MB) | `Detector_De_Difusion_Facial/` (355 MB) | `Sonda_De_Escena_Generada/` (2 GB) |
 | Entrada | 224×224, recorte facial | 380×380 isotrópico con relleno | 512×512 (processor propio) | 384/392, fotograma completo |
 
-La sonda de escena es el modelo más caro (~27 s por imagen en CPU), así que
-**solo se invoca para resolver ambigüedades** y sobre 2 fotogramas: cuando la
-condena viene únicamente del detector de difusión (¿generación global o
-filtro facial?) o cuando un veredicto «Real» arrastra señal de generación en
-zona gris (¿generador reciente con firma atenuada?). Los casos claros no
-pagan su coste. Sus pesos se convirtieron a solo-tensores y los LoRA se
-fusionan en los backbones al cargar (equivalente en inferencia; la
-cuantización int8 se probó y se descartó por degradar el resultado).
+La sonda de escena es el modelo más caro (~20-27 s por imagen en CPU). En
+**video** examina siempre **4 encuadres** repartidos (preferentemente aquellos
+en los que el rostro no domina) y decide su mediana. En **imágenes** solo se
+invoca para resolver ambigüedades: cuando la condena viene únicamente del
+detector de difusión (¿generación global o filtro facial?) o cuando un «Real»
+arrastra señal de generación en zona gris. Sus pesos se convirtieron a
+solo-tensores y los LoRA se fusionan en los backbones al cargar (equivalente
+en inferencia; la cuantización int8 se probó y se descartó por degradar el
+resultado).
 
 Los pesos del segundo modelo se convirtieron una única vez desde el
 checkpoint del release oficial a un archivo de solo-tensores, para poder
 cargarlos con el modo seguro (`weights_only`) de `torch.load`.
 
-En video (24 fotogramas muestreados), cada modelo agrega según su naturaleza:
-los de generación (GAN y difusión) usan la **mediana**, porque una cara
-generada lo es en todos los fotogramas por igual — el valor central es el
-representativo, y la mediana resiste la minoría de fotogramas atípicos en
-ambas direcciones (picos de ruido en video auténtico, valles por desenfoque
-en video generado). El de face swap usa el **segundo máximo**. La razón es forense: en un swap el rostro está intercambiado todo
-el tiempo, pero los artefactos solo se ven en algunos fotogramas (pose,
-expresión, iluminación) — los picos intermitentes son señal, no ruido, y un
-promedio simple los diluye. El segundo máximo exige **dos detecciones
-independientes**: un único pico (una oclusión o un desenfoque en un video
-auténtico) se ignora por completo, pero dos fotogramas delatores condenan sin
-dilución. La calibración salió de casos reales de ambas clases: sobre
-material auténtico el B7 puntúa por debajo de 0.05 con notable consistencia,
-mientras que el B0 sí produce picos aislados en fotogramas de video (está
-fuera de su dominio ahí) — por eso solo el detector de face swap alimenta
+En video (24 fotogramas muestreados) la regla vive en
+`backend/app/video_rule.py`, sin dependencias de los modelos, y la comparten
+producción, el script de calibración y las pruebas:
+
+- **Face swap sostenido.** Un intercambio de rostro dura todo el plano, así
+  que el B7 se dispara en fotogramas **consecutivos**; sus falsas alarmas en
+  video auténtico (perfiles, rostros pequeños, desenfoque) son picos breves.
+  Se mide el nivel que la señal mantiene durante 3 fotogramas seguidos con
+  rostro (`models.faceswap_dfdc`): por encima de 0.5 condena; si solo se
+  sostiene en 2, el dictamen queda en `Suspect`.
+- **Sonda de escena** (mediana de 4 encuadres): ≥ 0.8 condena en solitario
+  (generación del video completo); < 0.5 es entorno limpio; entre ambos,
+  `Suspect`.
+- **`Real`** exige escena limpia, ningún par de disparos de face swap y la
+  mediana de síntesis GAN por debajo de 0.5 (salvaguarda: la GAN no condena,
+  pero impide certificar autenticidad).
+- **GAN y difusión son orientativas.** Con material de redes sociales, el
+  detector de difusión puntuó más alto los videos auténticos que los
+  generados (los filtros y la recompresión imitan su firma), y la GAN no
+  separaba. Se informan en `models`, pero ni condenan ni pintan los mapas
+  de calor de la secuencia.
+
+Solo el detector de face swap, y solo en fotogramas con rostro, alimenta
+`suspicious_seconds`: los fotogramas que superan 0.6 y que el perito debería
+revisar a mano con su marca de tiempo.
+
+#### Calibración
+
+`python -m scripts.calibrate_catalog` (desde `backend/`, con la API
+detenida) ejecuta el pipeline real sobre `backend/Catologo de videos/Real` y
+`/Fake`, registra todas las señales y escribe `backend/calibracion/resumen.md`:
+matriz de confusión, separabilidad (AUC) de cada señal, errores y la regla
+vigente simulada sobre las mediciones. Con el catálogo de 71 videos de redes
+sociales (36 auténticos, 35 manipulados) medido el 2026-11-11:
+
+| Regla | Real → Fake | Fake → Real | Aciertos | Aciertos donde se pronuncia | Suspect |
+|---|---|---|---|---|---|
+| Anterior (máximo de 3 peritos) | 25 / 36 | 0 / 35 | 52 % | 60 % | 9 |
+| Vigente | 2 / 36 | 1 / 35 | 66 % | 94 % | 21 |
+
+Los umbrales se eligieron con validación cruzada dejando uno fuera (los
+mismos ganaron en 69 de 71 particiones). Son 71 videos de una sola fuente:
+conviene ampliar el catálogo y volver a medir antes de darlos por cerrados.
 `suspicious_seconds`, los fotogramas que superan 0.6 y que el perito debería
 revisar a mano con su marca de tiempo.
 
@@ -529,21 +560,23 @@ quienes corren 24 veces por video).
 `predict_image` y `predict_video` comparten el mismo esqueleto:
 
 1. Recorte facial (YuNet) → los tres peritos faciales puntúan el recorte.
-2. Agregación por familia (video): **mediana** para GAN y difusión, **segundo
-   máximo** para face swap — la justificación forense de cada estadística
-   está en [backend/models/README.md](backend/models/README.md), Paso 4.
-3. Cascada de decisión: condena corroborada → `Fake`; condena solo por
-   difusión → contraprueba con la Sonda De Escena (cuatro salidas, Paso 5);
-   candidato a `Real` → verificación sistemática de escena; señal en zona
-   gris → `Suspect`.
+2. Video: face swap **sostenido** en fotogramas consecutivos con rostro y
+   **sonda de escena** sobre 4 encuadres; la regla (`video_rule.py`) da
+   `Fake`, `Real` o `Suspect` con su nota. GAN y difusión se agregan por
+   mediana como orientativas.
+3. Imagen: cascada de decisión: condena corroborada → `Fake`; condena solo
+   por difusión → contraprueba con la Sonda De Escena (cuatro salidas,
+   Paso 5); candidato a `Real` → verificación sistemática de escena; señal
+   en zona gris → `Suspect`.
 4. Mapa de calor explicativo (`explain.py`) sobre el fotograma más
    incriminatorio, dentro de un `try/except`: su fallo nunca afecta al
    veredicto.
 
 Cada fotograma queda en el log con sus tres probabilidades (`p_gan`,
-`p_swap`, `p_diff`), y la respuesta expone `frame_scores` (máximo por
-fotograma) y los agregados por familia en `models` — la trazabilidad
-completa de dónde salió el veredicto.
+`p_swap`, `p_diff`), y la respuesta expone `frame_scores` (en video, el face
+swap de cada fotograma con rostro), los agregados en `models`,
+`decisive_models` (qué detectores decidieron) y `scene_probes` (cada lectura
+de la sonda) — la trazabilidad completa de dónde salió el veredicto.
 
 ### `explain.py` — mapa de calor explicativo
 
@@ -878,6 +911,12 @@ precio de que el dictamen viaje con su evidencia visual completa.
 `prediction` es la cadena `"Real"`, `"Fake"` o `"Suspect"`, y `confidence` un
 porcentaje entre 0 y 100 redondeado a dos decimales.
 
+**En video** el dictamen sale de la regla de `video_rule.py` (face swap
+sostenido y sonda de escena, ver «Calibración»); cada `"Suspect"` lleva un
+`caveat` que explica la duda: lectura de escena intermedia, face swap breve
+(dos fotogramas seguidos) o síntesis GAN alta sin corroborar. Lo que sigue
+describe la cascada de **imágenes**.
+
 **Dictamen con reserva (`"Suspect"`) y contraprueba de contexto:** cuando el
 único perito que condena es el detector de difusión y los otros dos están
 limpios (< 0.3), el sistema ejecuta una **contraprueba de contexto**: vuelve a
@@ -919,11 +958,13 @@ perito, y la zona gris garantiza que una señal de generación sin explicar
 nunca llega a este sello. `faces_detected` indica en
 cuántos fotogramas (o en la imagen) se pudo recortar un rostro; si es 0, el
 veredicto se emitió sobre el encuadre completo y la aplicación lo advierte.
-`frame_scores` es, por fotograma, la mayor probabilidad de manipulación entre
-los peritos faciales. `models` desglosa la puntuación agregada de cada uno:
-`synthesis_gan`, `faceswap_dfdc`, `diffusion_modern` y, cuando la sonda
-participó, `scene_generated`; el veredicto lo decide la señal más alta, con
-las reglas de reserva y verificación descritas arriba.
+`frame_scores` es, por fotograma, la probabilidad de face swap (0 sin
+rostro). `models` desglosa la puntuación agregada de cada detector:
+`synthesis_gan`, `faceswap_dfdc` (en video, el nivel sostenido),
+`diffusion_modern` y, cuando la sonda participó, `scene_generated`.
+`decisive_models` lista los que deciden (en video, face swap y escena; el
+resto es orientativo) y `scene_probes` cada lectura de la sonda con su
+fotograma.
 
 **Errores:** si el video no se puede decodificar (códec no soportado), el
 endpoint responde `422` con un campo `detail` que explica la causa; la
@@ -971,5 +1012,5 @@ aplicación web muestra ese mensaje tal cual en el registro del análisis.
 | Un video se analiza como si fuera imagen | La extensión no está en la tabla de MIME de `web/src/domain/evidence.ts`. Añádela allí. |
 | Todo video da el mismo veredicto | Revisa el log del backend: `faces_detected` por fotograma y los `p_fake` individuales dicen si el detector encuentra el rostro y cómo puntúa cada fotograma. Si `rostro=no` en todos, el material no tiene caras detectables de frente. |
 | El video no se puede decodificar (HTTP 422) | El códec no lo soporta OpenCV. Recodifica a MP4/H.264, por ejemplo: `ffmpeg -i entrada -c:v libx264 -crf 23 salida.mp4`. |
-| El análisis de un video se agota por tiempo | En CPU los tres peritos faciales suman ~2 s por fotograma (~45–55 s por video), más la sonda de escena (~30 s por sonda) cuando el caso la requiere y ~2–5 s del mapa de calor. Si se agota, sube `PREDICT_TIMEOUT_MS` en `web/src/infrastructure/http/http-forensics-api.ts` o reduce `max_frames` en `extract_frames`. |
+| El análisis de un video se agota por tiempo | En CPU los tres peritos faciales suman ~2 s por fotograma (~45–55 s por video), más la sonda de escena (~20-30 s por sonda; en video, 4 sondas siempre) y ~2–5 s del mapa de calor. Si se agota, sube `PREDICT_TIMEOUT_MS` en `web/src/infrastructure/http/http-forensics-api.ts` o reduce `max_frames` en `extract_frames`. |
 | La vista previa aparece en blanco | El formato del contenedor de video no lo soporta el navegador (por ejemplo, ciertos `.mkv`). El análisis sigue funcionando: la vista previa y la inferencia son independientes. |

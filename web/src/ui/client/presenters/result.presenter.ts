@@ -63,7 +63,7 @@ export function renderResult(result: AnalysisResult): void {
 
   if (result.models) {
     // Orden descendente; la señal que fija el dictamen va marcada con ▸.
-    el.resultModels.textContent = signalLegend(result.models as Record<string, number>);
+    el.resultModels.textContent = signalLegend(result.models as Record<string, number>, result.decisive_models);
     el.resultModels.hidden = false;
   } else {
     el.resultModels.hidden = true;
