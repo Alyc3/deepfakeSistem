@@ -5,23 +5,25 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 
 from app.auth_service import get_current_perito, record_audit_event
 from app.database import get_db
 from app.forensic_storage import get_storage
-from app.forensic_workflow import add_bundle, analyze_and_archive, descriptors, owned_case, preserve, read_upload, verified_working
+from app.forensic_workflow import add_bundle, analyze_and_archive, descriptors, owned_case, preserve, read_upload, verified_working, with_plates
 from app.celery_app import celery_app
-from app.tasks import analyze_evidence_task
+from app import local_jobs
+from app.tasks import analyze_evidence_task, run_analysis_job
 from app.report_pdf import build_forensic_pdf
 from app.identity import require_laboratory
 from app.models_db import AnalysisJob, AnalysisReport, CustodyAuditLog, Evidence, ForensicCase, StoredArtifact
 from app.schemas import CaseCreateSchema, FinalizeReportSchema
 from app.storage.ports import IntegrityError, StorageError
 from app.storage.sealing import sha256
+from app.validators import sha256_or_none
 
 router = APIRouter(dependencies=[Depends(require_laboratory)], tags=["Custodia y archivo forense"])
 logger = logging.getLogger("certiface.forensics")
@@ -41,8 +43,9 @@ async def audit(db, perito, request, action, evidence=None, details=None, verifi
 
 
 async def ingest(db, case, perito, request, file, expected_sha256=None):
+    expected_sha256 = sha256_or_none(expected_sha256)
     data, mime = await read_upload(file)
-    if expected_sha256 is not None and expected_sha256.lower() != sha256(data):
+    if expected_sha256 is not None and expected_sha256 != sha256(data):
         await audit(db, perito, request, "EVIDENCE_HASH_REJECTED", details={"case_id": str(case.id)}, verified=False)
         raise HTTPException(409, "La evidencia recibida no coincide con la huella declarada")
     try:
@@ -75,25 +78,46 @@ async def analyze(db, case, evidence, perito, request):
     return result
 
 
+INTERRUPTED_DETAIL = "El análisis se interrumpió porque el servidor se reinició. Vuelve a iniciarlo."
+
+
+def use_worker(db) -> bool:
+    """¿Analiza un worker de Celery o esta misma API? (INFERENCE_MODE; ver app/local_jobs.py)."""
+    mode = local_jobs.inference_mode()
+    if mode != "auto":
+        return mode == "worker"
+    if local_jobs.worker_responds():
+        return True
+    # Sin respuesta: o no hay worker, o está ocupado con un trabajo que le entregamos hace poco.
+    sent = [uuid.UUID(job_id) for job_id in local_jobs.recently_dispatched()]
+    return bool(sent) and local_jobs.broker_reachable() and db.query(AnalysisJob).filter(
+        AnalysisJob.id.in_(sent), AnalysisJob.status.in_(["QUEUED", "PROCESSING"])).first() is not None
+
+
 async def queue_analysis(db, case, evidence, perito, request):
-    """Crea el trabajo en estado QUEUED y entrega la inferencia al worker."""
+    """Crea el trabajo en estado QUEUED y lo entrega al worker o, si no hay, al hilo de inferencia de la API."""
     job_id = uuid.uuid4()
     queued = AnalysisJob(id=job_id, case_id=case.id, evidence_id=evidence.id, perito_id=perito.id, status="QUEUED")
     db.add(queued)
     db.commit()
-    try:
-        task = analyze_evidence_task.apply_async(
-            args=[str(case.id), str(evidence.id), str(perito.id), str(job_id)], task_id=str(job_id)
-        )
-    except Exception:
-        queued.status = "FAILED"
-        queued.error_detail = "El broker de inferencia no está disponible."
-        db.commit()
-        raise HTTPException(503, "El servicio de inferencia asíncrona no está disponible.") from None
+    arguments = [str(case.id), str(evidence.id), str(perito.id), str(job_id)]
+    if await run_in_threadpool(use_worker, db):
+        mode = "worker"
+        try:
+            analyze_evidence_task.apply_async(args=arguments, task_id=str(job_id))
+        except Exception:
+            queued.status = "FAILED"
+            queued.error_detail = "El broker de inferencia no está disponible."
+            db.commit()
+            raise HTTPException(503, "El servicio de inferencia asíncrona no está disponible.") from None
+        local_jobs.note_dispatched(str(job_id))
+    else:
+        mode = "local"
+        local_jobs.submit(str(job_id), lambda report: run_analysis_job(*arguments, report_progress=report, origin="api-local"))
     await audit(db, perito, request, "EVIDENCE_ANALYSIS_QUEUED", evidence,
-                {"case_id": str(case.id), "job_id": task.id}, verified=False)
-    return {"status": "queued", "job_id": task.id, "case_id": str(case.id), "evidence_id": str(evidence.id),
-            "poll_after_ms": 2000}
+                {"case_id": str(case.id), "job_id": str(job_id), "mode": mode}, verified=False)
+    return {"status": "queued", "job_id": str(job_id), "case_id": str(case.id), "evidence_id": str(evidence.id),
+            "poll_after_ms": 2000, "mode": mode}
 
 
 @router.post("/api/v1/cases", status_code=201)
@@ -106,10 +130,38 @@ async def create_case(case_data: CaseCreateSchema, request: Request, perito=Depe
     return {"id": str(case.id), "case_number": case.case_number, "title": case.title}
 
 
+def _like(term: str) -> str:
+    """Patrón LIKE literal: el texto buscado no puede usar % ni _ como comodines."""
+    return "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
 @router.get("/api/v1/cases")
-async def list_cases(perito=Depends(get_current_perito), db=Depends(get_db)):
-    cases = db.query(ForensicCase).filter(ForensicCase.perito_id == perito.id).order_by(ForensicCase.created_at.desc()).limit(200).all()
-    return [{"id": str(case.id), "case_number": case.case_number, "title": case.title, "created_at": case.created_at.isoformat()} for case in cases]
+async def list_cases(q: Optional[str] = Query(None, max_length=100), offset: int = Query(0, ge=0, le=100_000),
+                     limit: int = Query(10, ge=1, le=50), perito=Depends(get_current_perito), db=Depends(get_db)):
+    """Expedientes del perito, paginados y con un resumen de cada uno (evidencias y último dictamen)."""
+    def load():
+        query = db.query(ForensicCase).filter(ForensicCase.perito_id == perito.id)
+        term = (q or "").strip()
+        if term:
+            pattern = _like(term)
+            query = query.filter(or_(ForensicCase.case_number.ilike(pattern, escape="\\"), ForensicCase.title.ilike(pattern, escape="\\")))
+        total = query.count()
+        cases = query.order_by(ForensicCase.created_at.desc(), ForensicCase.id).offset(offset).limit(limit).all()
+        ids = [case.id for case in cases]
+        evidences, verdicts = {}, {}
+        if ids:
+            evidences = dict(db.query(Evidence.case_id, func.count(Evidence.id)).filter(Evidence.case_id.in_(ids)).group_by(Evidence.case_id).all())
+            reports = (db.query(Evidence.case_id, AnalysisReport.verdict).join(AnalysisReport, AnalysisReport.evidence_id == Evidence.id)
+                       .filter(Evidence.case_id.in_(ids), AnalysisReport.verdict.isnot(None))
+                       .order_by(AnalysisReport.completed_at.desc().nullslast()).all())
+            for case_id, verdict in reports:
+                verdicts.setdefault(case_id, verdict)  # el primero es el más reciente
+        items = [{"id": str(case.id), "case_number": case.case_number, "title": case.title,
+                  "description": (case.description or "")[:160] or None,
+                  "created_at": case.created_at.isoformat() if case.created_at else None,
+                  "evidences": int(evidences.get(case.id, 0)), "verdict": verdicts.get(case.id)} for case in cases]
+        return {"items": items, "total": total, "offset": offset, "limit": limit}
+    return await run_in_threadpool(load)
 
 
 @router.post("/api/v1/cases/{case_id}/ingest", status_code=201)
@@ -150,6 +202,7 @@ async def analyze_case_async(case_id: uuid.UUID, request: Request, evidence_id: 
 @router.post("/predict")
 async def preserved_prediction(request: Request, file: UploadFile = File(...), expected_sha256: Optional[str] = Form(None), perito=Depends(get_current_perito), db=Depends(get_db)):
     """Compatibilidad con la web: preserva y encola la inferencia."""
+    expected_sha256 = sha256_or_none(expected_sha256)  # antes de crear el expediente
     get_storage().retention.check()
     case_id = uuid.uuid4()
     case = ForensicCase(id=case_id, case_number=f"CF-{datetime.now(timezone.utc):%Y%m%d}-{case_id.hex}", title=(file.filename or "Análisis de evidencia")[:255], perito_id=perito.id)
@@ -166,14 +219,30 @@ async def analysis_job(job_id: uuid.UUID, perito=Depends(get_current_perito), db
     job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id, AnalysisJob.perito_id == perito.id).first()
     if not job:
         raise HTTPException(404, "Trabajo no encontrado")
-    result = None
-    try:
-        result = celery_app.AsyncResult(str(job_id))
-        state = result.state
-    except Exception:
-        if job.status != "COMPLETED":
-            raise HTTPException(503, "El backend de resultados de inferencia no está disponible.") from None
-        state = "UNAVAILABLE"
+    # 1) Trabajo que corre (o corrió hace poco) dentro de esta API.
+    local = local_jobs.status(str(job_id))
+    if local is not None:
+        if local["state"] == "COMPLETED":
+            return {"status": "completed", "job_id": str(job_id), "result": local["result"]}
+        if local["state"] == "FAILED":
+            return {"status": "failed", "job_id": str(job_id), "detail": job.error_detail or "La inferencia no pudo completarse."}
+        return {"status": local["state"].lower(), "job_id": str(job_id), "poll_after_ms": 2000, "progress": local["progress"]}
+    # 2) Trabajo de un worker: su estado está en Redis. Solo se consulta si Redis responde
+    #    (con el broker caído, Celery reintenta durante muchos segundos en cada consulta).
+    result, state = None, "UNAVAILABLE"
+    if await run_in_threadpool(local_jobs.broker_reachable):
+        try:
+            result = celery_app.AsyncResult(str(job_id))
+            state = result.state
+        except Exception:
+            result, state = None, "UNAVAILABLE"
+    if result is None and job.status in ("QUEUED", "PROCESSING"):
+        if local_jobs.inference_mode() == "worker":
+            raise HTTPException(503, "El backend de resultados de inferencia no está disponible.")
+        # Ni esta API lo conoce ni hay worker alcanzable: lo ejecutaba un proceso que ya no existe.
+        job.status, job.error_detail, job.updated_at = "FAILED", INTERRUPTED_DETAIL, datetime.now(timezone.utc)
+        db.commit()
+        return {"status": "failed", "job_id": str(job_id), "detail": INTERRUPTED_DETAIL}
     if job.status == "COMPLETED":
         if result is not None and result.successful():
             return {"status": "completed", "job_id": str(job_id), "result": result.result}
@@ -188,8 +257,8 @@ async def analysis_job(job_id: uuid.UUID, perito=Depends(get_current_perito), db
                 "result_recovered_from_database": True,
             }}
         raise HTTPException(503, "El análisis figura completado, pero no se encontró su reporte en PostgreSQL.")
-    if job.status == "FAILED" or result.failed() or state == "FAILURE":
-        return {"status": "failed", "job_id": str(job_id), "detail": "La inferencia no pudo completarse."}
+    if job.status == "FAILED" or state == "FAILURE" or (result is not None and result.failed()):
+        return {"status": "failed", "job_id": str(job_id), "detail": job.error_detail or "La inferencia no pudo completarse."}
     progress = result.info if result is not None and isinstance(result.info, dict) else None
     return {"status": job.status.lower(), "job_id": str(job_id), "poll_after_ms": 2000, "progress": progress}
 
@@ -335,9 +404,11 @@ async def finalize_report(case_id: uuid.UUID, report_id: uuid.UUID, body: Finali
     ).order_by(CustodyAuditLog.timestamp.asc()).limit(500).all()
     audit_events = [{"timestamp": item.timestamp.isoformat(), "actor": perito.external_auth_id,
                      "action": item.action} for item in audit_rows]
-    pdf_bytes = await run_in_threadpool(build_forensic_pdf, case=case, evidence=evidence, report_id=str(report.id), result=result,
+    # El PDF lleva los mapas de calor descifrados; el resultado archivado mantiene solo sus referencias selladas.
+    pdf_result = await run_in_threadpool(with_plates, storage, db, case, evidence, perito, report.id, result)
+    pdf_bytes = await run_in_threadpool(build_forensic_pdf, case=case, evidence=evidence, report_id=str(report.id), result=pdf_result,
         original_sha256=original.sha256, working_sha256=evidence.sha256_working_copy,
-        expert_conclusions=body.expert_conclusions, audit_events=audit_events)
+        expert_conclusions=body.expert_conclusions, audit_events=audit_events, perito=perito)
     bundle = await run_in_threadpool(storage.archive_report, result, str(case.id), str(evidence.id), str(report.id), str(perito.id), perito.external_auth_id,
         evidence_manifest, original, previous_document["provenance"], {"artifact_id": str(row.id), "uri": row.storage_uri, "sha256": row.sha256}, pdf_bytes)
     rows = await run_in_threadpool(add_bundle, db, bundle, case, evidence, perito, report)

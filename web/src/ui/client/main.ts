@@ -14,10 +14,12 @@ import { wireCases } from "./controllers/cases.controller";
 import { wireAccount } from "./controllers/account.controller";
 import { wireAudit } from "./controllers/audit.controller";
 import { wireEngineConnection } from "./controllers/connection.controller";
+import { installActivityBar, setBusy } from "./loading";
 
 export function startLab(): void {
   const shell = document.getElementById("view-app")!;
   const section = shell.dataset.section!;
+  installActivityBar();
   document.body.dataset.section = section;
   lab().identity.hydrate(JSON.parse(shell.dataset.user!));
   state.session = lab().sessionStatus();
@@ -37,12 +39,30 @@ export function startLab(): void {
     if (open) sidebar.querySelector<HTMLElement>("a")?.focus(); else toggle.focus();
   };
   sidebar.inert = mobile.matches;
-  mobile.addEventListener("change", () => { menu(false); sidebar.inert = mobile.matches; });
-  toggle.addEventListener("click", () => menu(!sidebar.classList.contains("is-open")));
-  backdrop.addEventListener("click", () => menu(false));
+  // En escritorio el botón pliega el sidebar a un carril de iconos; en móvil abre el panel deslizante.
+  // La preferencia va en una cookie para que el servidor ya lo pinte plegado (sin salto al cargar).
+  const collapsed = () => shell.classList.contains("sidebar-collapsed");
+  const syncToggle = () => {
+    const open = mobile.matches ? sidebar.classList.contains("is-open") : !collapsed();
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.setAttribute("aria-label", open ? "Ocultar navegación" : "Mostrar navegación");
+  };
+  const setCollapsed = (value: boolean) => {
+    shell.classList.toggle("sidebar-collapsed", value);
+    document.cookie = `certiface_sidebar=${value ? "collapsed" : "expanded"}; Path=/; Max-Age=31536000; SameSite=Lax${window.location.protocol === "https:" ? "; Secure" : ""}`;
+    syncToggle();
+  };
+  const toggleSidebar = () => { if (mobile.matches) { menu(!sidebar.classList.contains("is-open")); syncToggle(); } else setCollapsed(!collapsed()); };
+  syncToggle();
+  mobile.addEventListener("change", () => { menu(false); sidebar.inert = mobile.matches; syncToggle(); });
+  toggle.addEventListener("click", toggleSidebar);
+  document.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "b") { event.preventDefault(); toggleSidebar(); }
+  });
+  backdrop.addEventListener("click", () => { menu(false); syncToggle(); });
   document.addEventListener("keydown", (event) => {
     if (!sidebar.classList.contains("is-open")) return;
-    if (event.key === "Escape") { menu(false); return; }
+    if (event.key === "Escape") { menu(false); syncToggle(); return; }
     if (event.key === "Tab") {
       const links = [...sidebar.querySelectorAll<HTMLElement>("a,button")];
       if (event.shiftKey && document.activeElement === links[0]) { event.preventDefault(); links.at(-1)?.focus(); }
@@ -67,12 +87,13 @@ export function startLab(): void {
   document.getElementById("account-recovery-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget as HTMLFormElement;
-    const button = form.querySelector("button")!;
+    // El enlace vive dentro de la tarjeta de contraseña y apunta a este formulario con el atributo form.
+    const button = document.querySelector<HTMLButtonElement>('[form="account-recovery-form"]') ?? form.querySelector("button")!;
     const message = document.getElementById("account-recovery-message")!;
-    button.disabled = true;
+    button.disabled = true; setBusy(button, true);
     try {
       message.textContent = await lab().identity.recoverPassword(lab().identity.current()!.email);
     } catch (error) { message.textContent = error instanceof Error ? error.message : "No se pudo enviar el enlace. Intenta de nuevo."; }
-    finally { button.disabled = false; }
+    finally { button.disabled = false; setBusy(button, false); }
   });
 }

@@ -10,27 +10,31 @@ import EvidenceChamber from "./EvidenceChamber.astro";
 import AnalysisPanel from "./AnalysisPanel.astro";
 import CasesView from "./CasesView.astro";
 import EngineConnection from "./EngineConnection.astro";
-interface Props { user: IdentityUser; permissions: Permission[]; section: string; policy: AccessPolicy; engineOverride: boolean; }
-const { user, permissions, section, policy, engineOverride } = Astro.props;
+interface Props { user: IdentityUser; permissions: Permission[]; section: string; policy: AccessPolicy; engineOverride: boolean; sidebarCollapsed?: boolean; }
+const { user, permissions, section, policy, engineOverride, sidebarCollapsed = false } = Astro.props;
 const available = SECTIONS.filter((item) => permissions.includes(item.permission));
 const active = SECTIONS.find((item) => item.id === section)!;
-const name = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email;
+const personName = [user.first_name, user.last_name].filter(Boolean).join(" ");
+const name = personName || user.email;
+// Saludo neutro: el servicio de usuarios no guarda el género, y deducirlo del nombre se equivocaría.
 const initials = name.split(/\s+/).slice(0,2).map((part) => part[0]).join("").toUpperCase();
 ---
-<div id="view-app" class="app-shell" data-section={section} data-user={JSON.stringify(user)} data-permissions={JSON.stringify(permissions)}>
+<div id="view-app" class:list={["app-shell", { "sidebar-collapsed": sidebarCollapsed }]} data-section={section} data-user={JSON.stringify(user)} data-permissions={JSON.stringify(permissions)}>
   <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="Cerrar navegación" hidden></button>
   <aside id="app-sidebar" class="app-sidebar" aria-label="Navegación principal">
-    <a class="sidebar-brand" href="/app"><span class="brand-mark"></span><span>CertiFace<span class="brand-caption">FORENSIC WORKSPACE</span></span></a>
-    <span class="workspace-label"><span class="status-pip"></span>Espacio de trabajo</span>
+    <a class="sidebar-brand" href="/app" aria-label="CertiFace, ir al inicio">
+      <img class="brand-logo" src="/assets/art/logo-mark.webp" alt="" width="36" height="36" decoding="async" />
+      <span class="brand-word">CertiFace</span>
+    </a>
     <nav class="sidebar-nav">
-      {[...new Set(available.map((item) => item.group))].map((group) => <div class="nav-group"><p>{group}</p>{available.filter((item) => item.group === group).map((item) => <a class:list={["nav-item", { active: section === item.id }]} href={`/app/${item.id}`} aria-current={section === item.id ? "page" : undefined}><Icon name={item.icon} size={19} /><span>{item.label}</span>{section === item.id && <span class="nav-active-dot"></span>}</a>)}</div>)}
+      {[...new Set(available.map((item) => item.group))].map((group) => <div class="nav-group"><p class="nav-group-title">{group}</p>{available.filter((item) => item.group === group).map((item) => <a class:list={["nav-item", { active: section === item.id }]} href={`/app/${item.id}`} data-label={item.label} aria-current={section === item.id ? "page" : undefined}><Icon name={item.icon} size={18} /><span class="nav-label">{item.label}</span></a>)}</div>)}
     </nav>
-    <div class="sidebar-footer"><span class="sidebar-seal"><Icon name="shield" size={17} />Evidencia. Criterio. Confianza.</span><button id="logout" class="sidebar-logout" type="button"><Icon name="logout" size={18} />Cerrar sesión</button></div>
+    <div class="sidebar-footer"><button id="logout" class="nav-item sidebar-logout" type="button" data-label="Cerrar sesión"><Icon name="logout" size={18} /><span class="nav-label">Cerrar sesión</span></button></div>
   </aside>
   <div class="app-main">
-    <header class="workspace-header"><div class="header-location"><button id="sidebar-toggle" class="icon-button mobile-menu" type="button" aria-label="Abrir navegación" aria-controls="app-sidebar" aria-expanded="false"><Icon name="menu" /></button><span class="breadcrumb">Espacio de trabajo<span>/</span><strong>{active.label}</strong></span></div><a class="header-profile" href="/app/perfil"><div class="header-profile-copy"><span id="analyst-name">{name}</span><small>{user.role.name}</small></div><span class="avatar-small">{initials}</span></a></header>
+    <header class="workspace-header"><div class="header-location"><button id="sidebar-toggle" class="icon-button sidebar-toggle" type="button" aria-label={sidebarCollapsed ? "Mostrar navegación" : "Ocultar navegación"} title="Mostrar u ocultar la navegación (Ctrl+B)" aria-controls="app-sidebar" aria-expanded={sidebarCollapsed ? "false" : "true"}><Icon name="panel" size={18} /></button><span class="breadcrumb">Espacio de trabajo<span>/</span><strong>{active.label}</strong></span></div><a class="header-profile" href="/app/perfil"><div class="header-profile-copy"><span id="analyst-name">{name}</span><small>{user.role.name}</small></div><span class="avatar-small">{initials}</span></a></header>
     <main id="main-content" class="workspace-content">
-      {section === "inicio" && <section class="dashboard"><div class="page-heading"><div><p class="eyebrow">CertiFace · Resumen</p><h1>Bienvenida, {name}</h1><p class="page-description">Panel pericial · {user.role.name}</p></div><a class="primary-button" href="/app/casos">Abrir casos y evidencias</a></div><div class="metric-row dashboard-metrics"><div><span class="metric-label">Rol activo</span><strong>{user.role.name}</strong></div><div><span class="metric-label">Perito</span><strong>{user.identifier || "—"}</strong></div><div><span class="metric-label">Estado de sesión</span><strong>Verificada</strong></div></div><div class="dashboard-grid"><article class="surface dashboard-card"><span class="metric-label">Flujo de trabajo</span><h2>Custodia clara, análisis trazable</h2><p>Crea un expediente, valida la huella, preserva la evidencia y su copia de trabajo, ejecuta el análisis y documenta la revisión pericial.</p><a class="text-action" href="/app/casos">Ir a casos →</a></article><article class="surface dashboard-card"><span class="metric-label">Archivo pericial</span><h2>Casos recientes</h2><p>Abre cada expediente para continuar el análisis o consultar el resumen visual de los casos finalizados.</p><a class="text-action" href="/app/casos">Ver expedientes →</a></article></div></section>}
+      {section === "inicio" && <section class="dashboard"><div class="page-heading"><div><p class="eyebrow">CertiFace · Resumen</p><h1>{personName ? `Hola, ${personName}` : "Hola"}</h1><p class="page-description">Panel pericial · {user.role.name}{!personName && <> · <a class="text-action" href="/app/perfil">Añade tu nombre en Mi perfil</a></>}</p></div><a class="primary-button" href="/app/casos">Abrir casos y evidencias</a></div><div class="metric-row dashboard-metrics"><div><span class="metric-label">Rol activo</span><strong>{user.role.name}</strong></div><div><span class="metric-label">Perito</span><strong>{user.identifier || "—"}</strong></div><div><span class="metric-label">Estado de sesión</span><strong>Verificada</strong></div></div><div class="dashboard-grid"><article class="surface dashboard-card"><span class="metric-label">Flujo de trabajo</span><h2>Custodia clara, análisis trazable</h2><p>Crea un expediente, valida la huella, preserva la evidencia y su copia de trabajo, ejecuta el análisis y documenta la revisión pericial.</p><a class="text-action" href="/app/casos">Ir a casos →</a></article><article class="surface dashboard-card"><span class="metric-label">Archivo pericial</span><h2>Casos recientes</h2><p>Abre cada expediente para continuar el análisis o consultar el resumen visual de los casos finalizados.</p><a class="text-action" href="/app/casos">Ver expedientes →</a></article></div></section>}
       {section === "casos" && <CasesView user={user} />}
       {section === "laboratorio" && <><div class="page-heading"><div><p class="eyebrow">Análisis forense</p><h1>Laboratorio</h1><p class="page-description">De la evidencia al criterio pericial.</p></div><div class="connection-badge"><span id="status-dot" class="status-dot" data-state="unknown"></span><button id="status-text" class="link-button" type="button">Comprobando motor…</button></div></div><div class="workgrid"><EvidenceChamber /><AnalysisPanel /></div></>}
       {section === "usuarios" && <UsersView />}

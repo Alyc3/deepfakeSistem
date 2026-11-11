@@ -1,6 +1,9 @@
 import { lab } from "../lab";
 import { showToast } from "../toast";
 import { describeError } from "../errors";
+import { restrictField } from "../validation";
+import { setBusy } from "../loading";
+import { RULES } from "@domain/validation";
 
 export async function handleLogout(): Promise<void> {
   try { await lab().logoutAnalyst(); window.location.assign("/login"); }
@@ -17,9 +20,10 @@ export function wireAuth(): void {
   const hint = document.getElementById("login-hint")!;
   const links = document.getElementById("login-links")!;
   const code = document.getElementById("mfa-code") as HTMLInputElement;
+  restrictField(code, RULES.otpCode);
   const showStep = (mfa: boolean) => {
     form.hidden = mfa; mfaForm.hidden = !mfa; links.hidden = mfa;
-    title.textContent = mfa ? "Verificación en dos pasos" : "Bienvenido de nuevo";
+    title.textContent = mfa ? "Verificación en dos pasos" : "Hola de nuevo";
     hint.textContent = mfa ? "Escribe el código de 6 dígitos que muestra tu app de autenticación." : "Accede con tu cuenta institucional.";
     if (mfa) { code.value = ""; mfaError.hidden = true; code.focus(); }
   };
@@ -32,7 +36,7 @@ export function wireAuth(): void {
     const button = document.getElementById("login-submit") as HTMLButtonElement;
     const email = document.getElementById("login-user") as HTMLInputElement;
     const password = document.getElementById("login-pass") as HTMLInputElement;
-    button.disabled = true; button.textContent = "Verificando…"; errorNode.hidden = true;
+    button.disabled = true; button.textContent = "Verificando…"; setBusy(button, true); errorNode.hidden = true;
     try {
       const result = await lab().loginAnalyst({ user: email.value, pass: password.value });
       password.value = "";
@@ -40,12 +44,12 @@ export function wireAuth(): void {
       if (result.mfaRequired) { showStep(true); return; }
       throw new Error(result.error);
     } catch (error) { errorNode.textContent = describeError(error, "No se pudo acceder."); errorNode.hidden = false; }
-    finally { password.value = ""; button.disabled = false; button.textContent = "Iniciar sesión"; }
+    finally { password.value = ""; button.disabled = false; button.textContent = "Iniciar sesión"; setBusy(button, false); }
   });
   mfaForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = document.getElementById("mfa-submit") as HTMLButtonElement;
-    button.disabled = true; mfaError.hidden = true;
+    button.disabled = true; setBusy(button, true); mfaError.hidden = true;
     try {
       const result = await lab().verifyAnalystMfa(code.value);
       if (result.ok) { window.location.assign("/app"); return; }
@@ -55,7 +59,7 @@ export function wireAuth(): void {
       // Si el reto caducó hay que volver a escribir la contraseña.
       if (/Vuelve a iniciar sesión/.test(text)) { showStep(false); errorNode.textContent = text; errorNode.hidden = false; return; }
       mfaError.textContent = text; mfaError.hidden = false; code.select();
-    } finally { button.disabled = false; }
+    } finally { button.disabled = false; setBusy(button, false); }
   });
   document.getElementById("mfa-cancel")!.addEventListener("click", async () => {
     // Descarta el reto pendiente en el servidor antes de volver al primer paso.

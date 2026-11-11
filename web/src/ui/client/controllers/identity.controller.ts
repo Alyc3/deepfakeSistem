@@ -1,11 +1,14 @@
-import { USER_STATUSES, fullName, isLocked, isSuspended, type IdentityUser, type NewUser, type Role, type UserStatus, type UserUpdate } from "@domain/identity";
+import { NEW_USER_STATUSES, USER_STATUSES, fullName, isLocked, isSuspended, type IdentityUser, type NewUser, type Role, type UserStatus, type UserUpdate } from "@domain/identity";
 import { lab } from "../lab";
 import { showToast } from "../toast";
 import { describeError } from "../errors";
+import { restrictForm, validateForm } from "../validation";
+import { loaded, refreshOnReturn, setBusy, skeleton } from "../loading";
+import { ROLE_SCHEMA, USER_SCHEMA } from "@domain/validation";
 const node = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const field = (form: HTMLFormElement, name: string) => form.elements.namedItem(name) as HTMLInputElement;
 const value = (form: HTMLFormElement, name: string) => field(form, name).value;
-const statuses = USER_STATUSES;
+const statusLabel = (status: string) => status.charAt(0) + status.slice(1).toLowerCase();
 const dateTime = new Intl.DateTimeFormat("es", { dateStyle: "medium", timeStyle: "short" });
 let users: IdentityUser[] = [];
 let roles: Role[] = [];
@@ -80,8 +83,10 @@ function renderRoles(): void {
   node("identity-empty").hidden = list.length !== 0;
 }
 async function refresh(): Promise<void> {
-  const request = ++generation; message("Actualizando…");
-  const refreshButton = node<HTMLButtonElement>("identity-refresh"); refreshButton.disabled = true;
+  const request = ++generation;
+  // Primera carga: esqueleto en la lista. Las recargas posteriores son silenciosas (solo la barra de actividad).
+  const target = section() === "usuarios" ? node("identity-users") : node("identity-roles");
+  if (!target.childElementCount) { node("identity-empty").hidden = true; section() === "usuarios" ? skeleton(target, 6, "row", 5) : skeleton(target, 3, "tile"); }
   try {
     const result = await Promise.all([lab().identity.listRoles(), section() === "usuarios" ? lab().identity.listUsers() : Promise.resolve([])]);
     if (request !== generation) return;
@@ -98,9 +103,12 @@ async function refresh(): Promise<void> {
       node<HTMLButtonElement>("user-create").disabled = false; renderUsers();
       if (editing) { const fresh = users.find((user) => user.id === editing!.id); if (fresh) { editing = fresh; renderAccountState(fresh); } }
     } else { node<HTMLButtonElement>("role-create").disabled = false; renderRoles(); }
-    message("");
-  } catch (error) { message(describeError(error, "No se pudieron cargar los datos.")); }
-  finally { refreshButton.disabled = false; }
+    loaded(target); message("");
+  } catch (error) {
+    if (request !== generation) return;
+    if (target.getAttribute("aria-busy")) { target.replaceChildren(); loaded(target); }
+    message(describeError(error, "No se pudieron cargar los datos."));
+  }
 }
 
 function renderAccountState(user: IdentityUser): void {
@@ -124,7 +132,10 @@ function openUser(user?: IdentityUser): void {
   node("password-hint").textContent = user ? "Déjala vacía para conservar la contraseña actual. Si la cambias, se cerrarán sus sesiones." : "Déjala vacía para enviar una invitación por correo: la persona elegirá su propia contraseña.";
   for (const key of ["id", "email", "first_name", "last_name", "identifier", "phone_number"] as const) field(form, key).value = user?.[key] ?? "";
   field(form, "role_name").value = user?.role.name ?? "";
-  field(form, "status").value = user?.status ?? "ACTIVO";
+  // Al crear solo se ofrecen los estados con los que puede nacer una cuenta; al editar, todos.
+  const statusSelect = field(form, "status") as unknown as HTMLSelectElement;
+  statusSelect.replaceChildren(...(user ? USER_STATUSES : NEW_USER_STATUSES).map((status) => new Option(statusLabel(status), status)));
+  statusSelect.value = user?.status ?? "ACTIVO";
   // Nadie puede cambiar su propio rol o estado, ni aplicarse acciones de administración.
   const self = !!user && user.id === lab().identity.current()?.id;
   field(form, "role_name").disabled = self; field(form, "status").disabled = self;
@@ -150,9 +161,19 @@ function userChanges(form: HTMLFormElement, user: IdentityUser): UserUpdate {
   if (value(form, "password")) changes.password = value(form, "password");
   return changes as UserUpdate;
 }
+/** Formato de los campos antes de enviar: en una edición, solo los que cambiaron (un dato antiguo no bloquea el resto). */
+function formatOk(form: HTMLFormElement, kind: "user" | "role"): boolean {
+  if (kind === "role") return validateForm(form, ROLE_SCHEMA, { required: ["name"] });
+  if (value(form, "id") && editing) {
+    const names = Object.keys(userChanges(form, editing));
+    return validateForm(form, USER_SCHEMA, { names, required: names.filter((name) => name === "email") });
+  }
+  return validateForm(form, USER_SCHEMA, { required: ["email", "role_name"] });
+}
 async function submit(form: HTMLFormElement, kind: "user" | "role"): Promise<void> {
+  if (!formatOk(form, kind)) return;
   const submitButton = form.querySelector<HTMLButtonElement>('[type="submit"]')!;
-  const errorNode = node(`${kind}-form-message`); submitButton.disabled = true; errorNode.hidden = true;
+  const errorNode = node(`${kind}-form-message`); submitButton.disabled = true; setBusy(submitButton, true); errorNode.hidden = true;
   try {
     const id = value(form, "id");
     if (kind === "user") {
@@ -171,7 +192,7 @@ async function submit(form: HTMLFormElement, kind: "user" | "role"): Promise<voi
     } else await lab().identity.saveRole({ name: value(form, "name").trim(), description: value(form, "description").trim() }, id || undefined);
     closeDialog(node<HTMLDialogElement>(`${kind}-dialog`)); showToast("Cambios guardados."); await refresh();
   } catch (error) { errorNode.textContent = describeError(error, "No se pudo guardar."); errorNode.hidden = false; }
-  finally { submitButton.disabled = false; if (kind === "user") field(form, "password").value = ""; }
+  finally { submitButton.disabled = false; setBusy(submitButton, false); if (kind === "user") field(form, "password").value = ""; }
 }
 
 /** Ejecuta una acción de administración sobre el usuario abierto y refresca la lista. */
@@ -200,10 +221,10 @@ function wireAccountActions(): void {
     }));
   node("confirm-accept").addEventListener("click", async () => {
     if (!confirmAction) return;
-    const accept = node<HTMLButtonElement>("confirm-accept"); accept.disabled = true;
+    const accept = node<HTMLButtonElement>("confirm-accept"); accept.disabled = true; setBusy(accept, true);
     try { await confirmAction(); closeDialog(node<HTMLDialogElement>("confirm-dialog")); confirmAction = null; }
     catch (error) { show("confirm-message", describeError(error, "No se pudo completar la acción.")); }
-    finally { accept.disabled = false; }
+    finally { accept.disabled = false; setBusy(accept, false); }
   });
   const suspendForm = node<HTMLFormElement>("suspend-form");
   node("user-suspend").addEventListener("click", () => {
@@ -236,30 +257,30 @@ function wireAccountActions(): void {
 export function wireIdentity(): void {
   document.querySelectorAll<HTMLButtonElement>("[data-close]").forEach((closer) => closer.addEventListener("click", () => closeDialog(node<HTMLDialogElement>(closer.dataset.close!))));
   document.querySelectorAll<HTMLDialogElement>("dialog").forEach((dialog) => dialog.addEventListener("close", () => dialog.querySelectorAll<HTMLInputElement>('input[type="password"]').forEach((input) => input.value = "")));
-  node("identity-refresh").addEventListener("click", () => void refresh());
   if (section() === "usuarios") {
     node<HTMLButtonElement>("user-create").disabled = true;
     node("user-create").addEventListener("click", () => openUser());
-    const select = field(node<HTMLFormElement>("identity-user-form"), "status") as unknown as HTMLSelectElement;
-    statuses.forEach((status) => select.add(new Option(status.toLowerCase(), status)));
     node("user-search").addEventListener("input", renderUsers); node("user-role-filter").addEventListener("change", renderUsers);
+    restrictForm(node<HTMLFormElement>("identity-user-form"), USER_SCHEMA);
     node<HTMLFormElement>("identity-user-form").addEventListener("submit", (event) => { event.preventDefault(); void submit(event.currentTarget as HTMLFormElement, "user"); });
     node<HTMLDialogElement>("user-dialog").addEventListener("close", () => { editing = null; });
     wireAccountActions();
   } else {
     node<HTMLButtonElement>("role-create").disabled = true;
     node("role-create").addEventListener("click", () => openRole()); node("role-search").addEventListener("input", renderRoles);
+    restrictForm(node<HTMLFormElement>("identity-role-form"), ROLE_SCHEMA);
     node<HTMLFormElement>("identity-role-form").addEventListener("submit", (event) => { event.preventDefault(); void submit(event.currentTarget as HTMLFormElement, "role"); });
     node("delete-role-confirm").addEventListener("click", async () => {
       if (!pendingRole) return;
-      const confirmButton = node<HTMLButtonElement>("delete-role-confirm"); confirmButton.disabled = true;
+      const confirmButton = node<HTMLButtonElement>("delete-role-confirm"); confirmButton.disabled = true; setBusy(confirmButton, true);
       try { await lab().identity.deleteRole(pendingRole.id); closeDialog(node<HTMLDialogElement>("delete-role-dialog")); pendingRole = null; showToast("Rol eliminado."); await refresh(); }
       catch (error) { node("delete-role-message").textContent = describeError(error, "No se pudo eliminar."); node("delete-role-message").hidden = false; }
-      finally { confirmButton.disabled = false; }
+      finally { confirmButton.disabled = false; setBusy(confirmButton, false); }
     });
     const tabs = [node("tab-roles"), node("tab-permissions")];
     const activate = (index: number) => tabs.forEach((tab, i) => { tab.setAttribute("aria-selected", String(i === index)); tab.tabIndex = i === index ? 0 : -1; node(tab.getAttribute("aria-controls")!).hidden = i !== index; });
     tabs.forEach((tab, index) => { tab.addEventListener("click", () => activate(index)); tab.addEventListener("keydown", (event) => { if (["ArrowLeft", "ArrowRight"].includes(event.key)) { event.preventDefault(); const next = 1 - index; activate(next); tabs[next].focus(); } }); });
   }
   void refresh();
+  refreshOnReturn(() => void refresh());
 }

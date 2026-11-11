@@ -1,21 +1,37 @@
 ---
 import type { IdentityUser } from "@domain/identity";
 import AnalisisView from "@ui/components/AnalisisView.astro";
+import Icon from "./Icon.astro";
 interface Props { user: IdentityUser }
 const { user } = Astro.props;
 ---
 <section id="cases-page" data-user={JSON.stringify(user)}>
-  <div id="cases-browser">
+  <div id="cases-browser" class="cases-browser">
   <div class="page-heading"><div><p class="eyebrow">Archivo pericial</p><h1>Casos y evidencias</h1><p class="page-description">Cada expediente organiza su evidencia original, copia de trabajo y reportes.</p></div></div>
-  <div class="cases-layout">
-    <section class="surface cases-create"><div class="surface-heading"><h2>Nuevo expediente</h2></div><form id="case-create-form" class="sheet-form">
-      <label class="field"><span>Número de caso</span><input class="text-input" name="case_number" maxlength="100" required /></label>
-      <label class="field"><span>Nombre del caso</span><input class="text-input" name="title" maxlength="255" required /></label>
-      <label class="field"><span>Descripción</span><textarea class="text-input" name="description" rows="3"></textarea></label>
-      <button class="primary-button" type="submit">Crear caso</button><p id="case-message" class="form-error" role="status"></p>
-    </form></section>
-    <section class="surface cases-list"><div class="surface-heading"><h2>Expedientes</h2><button id="cases-refresh" class="ghost-button" type="button">Actualizar</button></div><div id="cases-list" class="case-cards" aria-live="polite"><p class="inline-message">Cargando expedientes…</p></div></section>
-  </div>
+
+  <section class="surface cases-create" aria-labelledby="case-create-title">
+    <header class="account-card-head"><Icon name="plus" size={16} /><h2 id="case-create-title">Nuevo expediente</h2></header>
+    <form id="case-create-form" class="case-create-form" novalidate>
+      <label class="field case-field-number"><span>Número de caso</span><input class="text-input" name="case_number" minlength="3" maxlength="100" required autocomplete="off" spellcheck="false" autocapitalize="characters" placeholder="FGE-2026-0001" /></label>
+      <label class="field case-field-title"><span>Nombre del caso</span><input class="text-input" name="title" minlength="3" maxlength="255" required autocomplete="off" placeholder="Suplantación en videollamada" /></label>
+      <label class="field case-field-description"><span>Descripción <small>· opcional</small></span><textarea class="text-input" name="description" rows="1" maxlength="10000" placeholder="Contexto breve del caso"></textarea></label>
+      <button class="primary-button" type="submit">Crear expediente</button>
+      <p id="case-message" class="form-error case-create-message" role="status"></p>
+    </form>
+  </section>
+
+  <section class="surface cases-list" aria-labelledby="cases-list-title">
+    <header class="account-card-head cases-list-head">
+      <Icon name="folder" size={16} /><h2 id="cases-list-title">Expedientes <span id="cases-count" class="cases-count"></span></h2>
+      <label class="search-field cases-search"><Icon name="search" size={16} /><input id="cases-search" type="search" maxlength="100" placeholder="Buscar por número o nombre" aria-label="Buscar expedientes" autocomplete="off" /></label>
+    </header>
+    <div class="case-columns" aria-hidden="true"><span>Expediente</span><span>Evidencias</span><span>Estado</span><span>Creado</span><span></span></div>
+    <div id="cases-list" class="case-rows" aria-live="polite"></div>
+    <footer id="cases-pager" class="cases-pager" hidden>
+      <span id="cases-range"></span>
+      <span class="cases-pager-buttons"><button id="cases-prev" class="icon-button" type="button" aria-label="Página anterior" disabled><span aria-hidden="true">‹</span></button><span id="cases-page-label"></span><button id="cases-next" class="icon-button" type="button" aria-label="Página siguiente" disabled><span aria-hidden="true">›</span></button></span>
+    </footer>
+  </section>
   </div>
   <AnalisisView />
 </section>

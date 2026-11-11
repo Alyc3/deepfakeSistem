@@ -1,5 +1,8 @@
 """Aplicación: persistencia de ingesta y análisis, sin exponer URLs públicas."""
+import base64
+import copy
 import hashlib
+import logging
 import importlib.metadata
 import threading
 import time
@@ -14,7 +17,7 @@ from app.forensic_storage import PreservedBundle, get_storage
 from app.report_pdf import build_forensic_pdf
 from app.models_db import AnalysisReport, Evidence, ForensicCase, StoredArtifact, TimecodeInconsistency
 from app.storage.config import BACKEND, StorageConfig
-from app.storage.ports import Artifact, IntegrityError
+from app.storage.ports import Artifact, IntegrityError, StorageError
 from app.storage.sealing import sha256
 
 _inference_lock = threading.Lock()
@@ -49,6 +52,37 @@ async def read_upload(file: UploadFile) -> tuple[bytes, str]:
 def descriptors(row: StoredArtifact) -> tuple[Artifact, Artifact]:
     return (Artifact(row.kind, row.storage_uri, row.sha256, row.size_bytes, row.content_type),
             Artifact("manifest", row.manifest_uri, row.manifest_sha256, row.manifest_size_bytes, "application/json"))
+
+
+logger = logging.getLogger("certiface.workflow")
+
+
+def with_plates(storage, db, case, evidence, perito, report_id, result: dict) -> dict:
+    """Copia del resultado con las láminas (mapas de calor) descifradas en línea, solo para el PDF.
+
+    Al archivar, las láminas salen del resultado y quedan como artefactos sellados;
+    el resultado archivado conserva únicamente sus referencias. Para volver a emitir
+    el informe se verifican y descifran. Una lámina ilegible no impide el informe:
+    el documento indica que no está disponible.
+    """
+    pdf_result = copy.deepcopy(result)
+    explanation = pdf_result.get("explanation")
+    if not isinstance(explanation, dict):
+        return pdf_result
+    rows = {row.storage_uri: row for row in db.query(StoredArtifact).filter(
+        StoredArtifact.report_id == report_id, StoredArtifact.kind == "plate").all()}
+    for item in [explanation, *(explanation.get("frames") or [])]:
+        reference = item.get("artifact")
+        row = rows.get(reference.get("uri")) if isinstance(reference, dict) else None
+        if row is None or item.get("image"):
+            continue
+        try:
+            plate, manifest = descriptors(row)
+            storage.verify(plate, manifest, str(case.id), str(evidence.id), str(perito.id), str(report_id))
+            item["image"] = "data:image/jpeg;base64," + base64.b64encode(storage.read(plate)).decode("ascii")
+        except StorageError as error:
+            logger.warning("Lámina %s no disponible para el informe: %s", row.id, error)
+    return pdf_result
 
 
 def add_bundle(db, bundle: PreservedBundle, case, evidence, perito, report=None) -> list[StoredArtifact]:
@@ -167,7 +201,8 @@ def analyze_and_archive(db, case, evidence, perito, progress_callback=None):
     if progress_callback:
         progress_callback("heatmaps", "Preparando mapas de calor y dictamen")
     pdf_bytes = build_forensic_pdf(case=case, evidence=evidence, report_id=str(report_id), result=result,
-                                   original_sha256=original.sha256, working_sha256=evidence.sha256_working_copy)
+                                   original_sha256=original.sha256, working_sha256=evidence.sha256_working_copy,
+                                   perito=perito)
     if progress_callback:
         progress_callback("archive", "Sellando el resultado y guardando el informe")
     bundle = storage.archive_report(result, str(case.id), str(evidence.id), str(report_id), str(perito.id), perito.external_auth_id,

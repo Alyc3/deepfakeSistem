@@ -1,6 +1,7 @@
 import { fullName, type AuditEntry, type AuditFilter } from "@domain/identity";
 import { lab } from "../lab";
 import { describeError } from "../errors";
+import { loaded, refreshOnReturn, skeleton } from "../loading";
 
 const PAGE = 50;
 const node = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -36,23 +37,30 @@ function row(entry: AuditEntry): HTMLTableRowElement {
 }
 async function load(): Promise<void> {
   const request = ++generation;
-  const message = node("audit-message"); message.textContent = "Cargando eventos…";
+  const message = node("audit-message"); message.textContent = "";
+  const rows = node("audit-rows");
+  // Esqueleto solo en la primera carga; después, la barra de actividad basta y la tabla no parpadea.
+  if (!rows.childElementCount) { node("audit-empty").hidden = true; skeleton(rows, 8, "row", 5); }
   node<HTMLButtonElement>("audit-prev").disabled = true; node<HTMLButtonElement>("audit-next").disabled = true;
   try {
     const page = await lab().identity.listAudit({ ...filter, skip, limit: PAGE });
     if (request !== generation) return;
-    node("audit-rows").replaceChildren(...page.items.map(row));
+    rows.replaceChildren(...page.items.map(row)); loaded(rows);
     node("audit-empty").hidden = page.items.length > 0;
     node("audit-count").textContent = page.total ? `${skip + 1}–${skip + page.items.length} de ${page.total} eventos` : "";
     node<HTMLButtonElement>("audit-prev").disabled = skip === 0;
     node<HTMLButtonElement>("audit-next").disabled = skip + page.items.length >= page.total;
     message.textContent = "";
-  } catch (error) { message.textContent = describeError(error, "No se pudo cargar la auditoría."); }
+  } catch (error) {
+    if (request !== generation) return;
+    if (rows.getAttribute("aria-busy")) { rows.replaceChildren(); loaded(rows); }
+    message.textContent = describeError(error, "No se pudo cargar la auditoría.");
+  }
 }
 export function wireAudit(canListUsers: boolean): void {
   const form = node<HTMLFormElement>("audit-filter");
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
+  // Los filtros se aplican solos al escribir o elegir fecha: sin botones «Filtrar» ni «Actualizar».
+  const apply = () => {
     const data = new FormData(form);
     const day = (key: string, end: boolean) => {
       const value = String(data.get(key) ?? "");
@@ -61,8 +69,14 @@ export function wireAudit(canListUsers: boolean): void {
     };
     filter = { action: String(data.get("action") ?? "").trim() || undefined, date_from: day("date_from", false), date_to: day("date_to", true) };
     skip = 0; void load();
+  };
+  let typing: ReturnType<typeof setTimeout> | undefined;
+  form.addEventListener("input", (event) => {
+    clearTimeout(typing);
+    typing = setTimeout(apply, (event.target as HTMLInputElement).type === "date" ? 0 : 350);
   });
-  node("audit-refresh").addEventListener("click", () => void load());
+  form.addEventListener("submit", (event) => { event.preventDefault(); clearTimeout(typing); apply(); });
+  refreshOnReturn(() => void load());
   node("audit-prev").addEventListener("click", () => { skip = Math.max(0, skip - PAGE); void load(); });
   node("audit-next").addEventListener("click", () => { skip += PAGE; void load(); });
   // Con acceso a usuarios, se muestran nombres en lugar de identificadores.

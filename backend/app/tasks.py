@@ -1,4 +1,4 @@
-"""Trabajos Celery que ejecutan inferencia fuera del proceso HTTP."""
+"""Trabajo de inferencia: el mismo código corre en un worker Celery o dentro de la API (app/local_jobs.py)."""
 from __future__ import annotations
 
 import uuid
@@ -15,9 +15,19 @@ logger = logging.getLogger("certiface.worker")
 
 @celery_app.task(bind=True, name="certiface.analyze_evidence", acks_late=True)
 def analyze_evidence_task(self, case_id: str, evidence_id: str, perito_id: str, job_id: str) -> dict:
+    return run_analysis_job(case_id, evidence_id, perito_id, job_id,
+                            report_progress=lambda meta: self.update_state(state="PROCESSING", meta=meta), origin="worker")
+
+
+def run_analysis_job(case_id: str, evidence_id: str, perito_id: str, job_id: str, report_progress, origin: str) -> dict:
+    """Analiza una evidencia preservada y archiva el resultado.
+
+    `report_progress(meta)` publica el avance (estado de Celery o registro en memoria);
+    `origin` queda en la bitácora de custodia: "worker" o "api-local".
+    """
     started = datetime.now(timezone.utc)
-    logger.info("Inferencia iniciada job_id=%s case_id=%s evidence_id=%s task_id=%s",
-                job_id, case_id, evidence_id, self.request.id)
+    logger.info("Inferencia iniciada job_id=%s case_id=%s evidence_id=%s origen=%s",
+                job_id, case_id, evidence_id, origin)
     db = SessionLocal()
     progress_events = []
 
@@ -33,7 +43,7 @@ def analyze_evidence_task(self, case_id: str, evidence_id: str, perito_id: str, 
             meta["current"] = current
         if total is not None:
             meta["total"] = total
-        self.update_state(state="PROCESSING", meta=meta)
+        report_progress(meta)
 
     try:
         case = db.query(ForensicCase).filter(ForensicCase.id == uuid.UUID(case_id)).one()
@@ -49,7 +59,7 @@ def analyze_evidence_task(self, case_id: str, evidence_id: str, perito_id: str, 
         job.report_id = report.id
         job.updated_at = datetime.now(timezone.utc)
         db.add(CustodyAuditLog(perito_id=perito.id, evidence_id=evidence.id, action="INFERENCE_ARCHIVED",
-                               ip_address="worker", hash_verified=True,
+                               ip_address=origin, hash_verified=True,
                                details={"case_id": case_id, "report_id": str(report.id), "job_id": job_id}))
         db.commit()
         publish_progress("completed", f"Análisis terminado: {report.verdict}")

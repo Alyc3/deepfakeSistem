@@ -22,6 +22,8 @@ models/Detector_De_Difusion_Facial/model.safetensors
 models/Sonda_De_Escena_Generada/weights.pth
 
 # No necesarios en producción
+Catologo de videos/
+calibracion/
 tests/
 deploy/
 start.ps1
