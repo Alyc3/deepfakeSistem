@@ -44,6 +44,7 @@ from app.forensic_storage import get_storage
 from app.storage.ports import StorageError, IntegrityError, WriteConflict
 from app import model as _inference_models  # precarga los modelos antes de aceptar solicitudes
 from app.models_db import Perito
+from app.validators import install_validation_handler
 
 logger = logging.getLogger("certiface.api")
 
@@ -92,6 +93,9 @@ async def storage_error_handler(request: Request, error: StorageError):
     logger.warning("Operación de almacenamiento rechazada: %s", str(error))
     code = 409 if isinstance(error, (IntegrityError, WriteConflict)) else 503
     return JSONResponse({"detail": str(error)}, status_code=code, headers={"Cache-Control": "no-store"})
+
+
+install_validation_handler(app)
 
 
 @app.exception_handler(SQLAlchemyError)

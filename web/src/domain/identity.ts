@@ -1,6 +1,8 @@
 export interface Role { id: string; name: string; description?: string | null; }
 export const USER_STATUSES = ["ACTIVO", "INACTIVO", "SUSPENDIDO", "PENDIENTE"] as const;
 export type UserStatus = typeof USER_STATUSES[number];
+/** Una cuenta nueva nace activa o pendiente; inactivar y suspender son acciones sobre cuentas que ya existen. */
+export const NEW_USER_STATUSES = ["ACTIVO", "PENDIENTE"] as const satisfies readonly UserStatus[];
 export interface IdentityUser {
   id: string; email: string; role: Role; status: UserStatus;
   first_name?: string | null; last_name?: string | null;

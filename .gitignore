@@ -34,3 +34,8 @@ backend/.secrets/
 backend/uploads/
 
 backend/.runtime-tmp/
+backend/*
+
+# Catálogo de calibración y sus mediciones: videos con rostros de personas, nunca al repositorio
+backend/Catologo de videos/
+backend/calibracion/

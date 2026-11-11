@@ -18,7 +18,7 @@ export default defineConfig({
     // El origen lo valida src/middleware.ts contra APP_ORIGIN en tiempo de ejecución. La comprobación de Astro
     // compara con la URL interna del servidor, que detrás del proxy de Render no coincide con la pública.
     checkOrigin: false,
-    csp: { directives: ["default-src 'self'", "img-src 'self' data: blob:", "media-src 'self' blob:", "font-src 'self'", "connect-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'"], styleDirective: { resources: ["'self'", "'unsafe-inline'"] } },
+    csp: { directives: ["default-src 'self'", "img-src 'self' data: blob:", "media-src 'self' blob:", "font-src 'self'", "connect-src 'self'", "object-src 'none'", "frame-src 'self' blob:", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'"], styleDirective: { resources: ["'self'", "'unsafe-inline'"] } },
   },
   markdown: { syntaxHighlight: false },
   server: { port: 4321, host: true },

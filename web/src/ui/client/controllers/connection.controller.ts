@@ -5,6 +5,7 @@
  * publicado con un túnel). La URL se guarda en la sesión del servidor; el navegador solo recuerda la última
  * escrita para no tener que teclearla otra vez.
  */
+import { setBusy } from "../loading";
 import { showToast } from "../toast";
 
 type Connection = { source: "session" | "server" | "none"; url: string | null };
@@ -52,13 +53,13 @@ export function wireEngineConnection(onChange: () => void): void {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const submit = form.querySelector<HTMLButtonElement>('[type="submit"]')!;
-    submit.disabled = true; say("");
+    submit.disabled = true; setBusy(submit, true); say("");
     try {
       render(await call("PUT", { url: input.value.trim() }));
       remember(input.value.trim());
       showToast("Motor conectado."); dialog.close(); onChange();
     } catch (error) { say(error instanceof Error ? error.message : "No se pudo conectar."); }
-    finally { submit.disabled = false; }
+    finally { submit.disabled = false; setBusy(submit, false); }
   });
   reset.addEventListener("click", async () => {
     try { render(await call("DELETE")); showToast("Se usa el motor del servidor."); onChange(); }

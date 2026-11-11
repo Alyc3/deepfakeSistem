@@ -1,7 +1,9 @@
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.validators import CaseDescription, CaseNumber, CaseTitle, Conclusions
 
 
 class VerdictEnum(str, Enum):
@@ -50,10 +52,12 @@ class AuditEventSchema(BaseModel):
 
 
 class CaseCreateSchema(BaseModel):
-    case_number: str = Field(min_length=1, max_length=100)
-    title: str = Field(min_length=1, max_length=255)
-    description: Optional[str] = Field(default=None, max_length=10000)
+    model_config = ConfigDict(extra="forbid")
+    case_number: CaseNumber
+    title: CaseTitle
+    description: CaseDescription = None
 
 
 class FinalizeReportSchema(BaseModel):
-    expert_conclusions: str = Field(min_length=1, max_length=20000)
+    model_config = ConfigDict(extra="forbid")
+    expert_conclusions: Conclusions

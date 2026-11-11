@@ -212,9 +212,17 @@ Es idempotente: lo ya descargado no se repite. El Detector De Síntesis GAN
 (16 MB, entrenamiento propio) y el Detector Facial YuNet sí van en el
 repositorio.
 
-### 5. Arrancar Redis y el worker de inferencia
+### 5. (Opcional) Arrancar Redis y el worker de inferencia
 
-Configura `CELERY_BROKER_URL` y `CELERY_RESULT_BACKEND` en `backend/.env`.
+**No es obligatorio.** Con `INFERENCE_MODE=auto` (el valor por defecto), si no
+hay un worker conectado la propia API ejecuta los análisis en un hilo de fondo,
+de uno en uno y con el mismo seguimiento de progreso. Así el equipo carga los
+modelos una sola vez (un worker los carga otra vez: ~5 GB más de RAM). Con
+`INFERENCE_MODE=local` ni siquiera se consulta Redis. El worker conviene cuando
+la API y la inferencia deben vivir en máquinas distintas, o para que un
+reinicio de la API no interrumpa un análisis en curso.
+
+Para usar un worker, configura `CELERY_BROKER_URL` y `CELERY_RESULT_BACKEND` en `backend/.env`.
 Puedes iniciar el Redis local incluido en el proyecto con:
 
 ```bash
@@ -244,7 +252,8 @@ curl http://127.0.0.1:8000/            # → {"status":"ok"}
 
 La documentación interactiva que genera FastAPI está en
 `http://127.0.0.1:8000/docs` y permite probar `/predict` subiendo un archivo.
-La respuesta es `202` con un `job_id`; el resultado se consulta en`GET /api/v1/jobs/{job_id}`.
+La respuesta es `202` con un `job_id`; el resultado se consulta en
+`GET /api/v1/jobs/{job_id}`.
 
 **Prueba directa desde la terminal:**
 
