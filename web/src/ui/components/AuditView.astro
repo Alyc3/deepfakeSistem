@@ -11,10 +11,8 @@ import Icon from "./Icon.astro";
       </datalist>
       <label class="field audit-date"><span class="visually-hidden">Desde</span><input class="text-input" name="date_from" type="date" aria-label="Desde" /></label>
       <label class="field audit-date"><span class="visually-hidden">Hasta</span><input class="text-input" name="date_to" type="date" aria-label="Hasta" /></label>
-      <button class="ghost-button" type="submit">Filtrar</button>
-      <button id="audit-refresh" class="icon-button" type="button" aria-label="Actualizar auditoría"><Icon name="refresh" size={18} /></button>
     </form>
-    <p id="audit-message" class="inline-message" role="status" aria-live="polite">Cargando eventos…</p>
+    <p id="audit-message" class="inline-message" role="status" aria-live="polite"></p>
     <div class="table-scroll"><table class="data-table audit-table"><thead><tr><th>Fecha</th><th>Acción</th><th>Usuario</th><th>Origen</th><th>Detalles</th></tr></thead><tbody id="audit-rows"></tbody></table></div>
     <div id="audit-empty" class="empty-state" hidden><Icon name="list" size={32} /><h3>Sin eventos</h3><p>No hay registros con esos filtros.</p></div>
     <div class="table-footer"><span id="audit-count"></span><span class="audit-pager"><button id="audit-prev" class="text-action" type="button" disabled>← Anteriores</button><button id="audit-next" class="text-action" type="button" disabled>Siguientes →</button></span></div>

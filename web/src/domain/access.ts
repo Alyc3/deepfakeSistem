@@ -1,6 +1,6 @@
 export const SECTIONS = [
-  { id: "inicio", permission: "laboratory", label: "Resumen", group: "Trabajo", icon: "scan", description: "Panel principal" },
-  { id: "casos", permission: "laboratory", label: "Casos y evidencias", group: "Trabajo", icon: "scan", description: "Expedientes y evidencias" },
+  { id: "inicio", permission: "laboratory", label: "Resumen", group: "Trabajo", icon: "grid", description: "Panel principal" },
+  { id: "casos", permission: "laboratory", label: "Casos y evidencias", group: "Trabajo", icon: "folder", description: "Expedientes y evidencias" },
   { id: "usuarios", permission: "users", label: "Usuarios", group: "Administración", icon: "users", description: "Cuentas y accesos del equipo" },
   { id: "roles", permission: "roles", label: "Roles y accesos", group: "Administración", icon: "shield", description: "Roles del servicio y alcance de acceso" },
   { id: "auditoria", permission: "audit", label: "Auditoría", group: "Administración", icon: "list", description: "Eventos de seguridad del servicio de usuarios" },

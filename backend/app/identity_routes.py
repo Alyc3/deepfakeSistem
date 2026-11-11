@@ -4,43 +4,48 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request, Response, Security
 from fastapi.security import HTTPAuthorizationCredentials
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from app.identity import active_profile, bearer_token, identity_request, require_identity, security
 from app.access_policy import enforce_permission
+from app.validators import (Email, Identifier, LastName, OptionalEmail, OptionalPassword, OptionalUserRole, Password,
+                            PersonName, Phone, RoleDescription, RoleName, UserRole)
 
 router = APIRouter(prefix="/api/v1", tags=["Usuarios y roles"])
 UserStatus = Literal["ACTIVO", "INACTIVO", "SUSPENDIDO", "PENDIENTE"]
+# Una cuenta nueva nace activa o pendiente; inactivar y suspender son acciones sobre cuentas existentes.
+NewUserStatus = Literal["ACTIVO", "PENDIENTE"]
 
 
 class LoginInput(BaseModel):
-    email: str = Field(min_length=3, max_length=254)
-    password: str = Field(min_length=1, max_length=1024)
+    email: Email
+    password: Password
 
 
 class RoleInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    name: str = Field(min_length=1, max_length=100)
-    description: str | None = None
+    name: RoleName
+    description: RoleDescription = None
 
 
 class UserInput(LoginInput):
     model_config = ConfigDict(extra="forbid")
-    role_name: str = Field(min_length=1)
-    first_name: str | None = None
-    last_name: str | None = None
-    identifier: str | None = None
-    phone_number: str | None = None
-    status: UserStatus = "ACTIVO"
+    role_name: UserRole
+    first_name: PersonName = None
+    last_name: LastName = None
+    identifier: Identifier = None
+    phone_number: Phone = None
+    status: NewUserStatus = "ACTIVO"
 
 
 class UserUpdate(BaseModel):
+    """Solo se reenvían los campos enviados; si se envían, deben tener formato válido."""
     model_config = ConfigDict(extra="forbid")
-    email: str | None = None
-    password: str | None = None
-    role_name: str | None = None
-    identifier: str | None = None
-    phone_number: str | None = None
+    email: OptionalEmail = None
+    password: OptionalPassword = None
+    role_name: OptionalUserRole = None
+    identifier: Identifier = None
+    phone_number: Phone = None
     status: UserStatus | None = None
 
 

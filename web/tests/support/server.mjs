@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,14 @@ export async function startTestServer() {
   // Relleno para comprobar que el listado reúne todas las páginas del auth-service (máximo 200 por página).
   const listed = [...users, ...Array.from({ length: 250 }, (_, index) => person(`bulk-${index}`, `bulk${index}@example.test`, roles[2]))];
   const calls = [];
+  // Motor forense simulado: expedientes con evidencias y dictámenes variados (lista paginada con búsqueda).
+  const verdicts = [null, 'MANIPULADO', 'SIN_MANIPULACION', 'ANTECEDENTES'];
+  const cases = Array.from({ length: 23 }, (_, index) => ({
+    id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`, case_number: `FGE-2026-${String(23 - index).padStart(4, '0')}`,
+    title: ['Suplantación en videollamada', 'Video viral manipulado', 'Audio y video de extorsión', 'Perfil falso con rostro generado'][index % 4] + ` ${23 - index}`,
+    description: index % 3 ? 'Denuncia recibida por la unidad de delitos informáticos; evidencia entregada en memoria USB.' : null,
+    created_at: new Date(Date.UTC(2026, 10, 10 - index)).toISOString(), evidences: index % 5 === 4 ? 0 : 1 + (index % 2), verdict: index % 5 === 4 ? null : verdicts[index % 4],
+  }));
   const state = { reuseDetected: false, refreshes: 0 };
   const access = new Map(); // access token -> { user, session }
   const refresh = new Map(); // refresh token -> { user, session, used }
@@ -34,7 +42,8 @@ export async function startTestServer() {
   const send = (response, status, body, headers = {}) => { response.writeHead(status, { 'Content-Type': 'application/json', ...headers }); response.end(body === undefined ? '' : JSON.stringify(body)); };
   const mock = http.createServer(async (request, response) => {
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
-    const raw = Buffer.concat(chunks).toString(); const body = raw ? JSON.parse(raw) : {};
+    const raw = Buffer.concat(chunks).toString();
+    const body = raw && (request.headers['content-type'] ?? '').startsWith('application/json') ? JSON.parse(raw) : {};
     const url = new URL(request.url, 'http://mock'); const path = url.pathname;
     calls.push({ path: request.url, method: request.method, headers: request.headers, body });
     if (path === '/health/live') return send(response, 200, { status: 'ok' });
@@ -73,6 +82,41 @@ export async function startTestServer() {
       return send(response, 200, listed.slice(skip, skip + limit), { 'X-Total-Count': String(listed.length) });
     }
     if (path === '/api/roles/') return send(response, 200, roles);
+    if (path === '/api/v1/cases' && request.method === 'GET') {
+      const term = (url.searchParams.get('q') ?? '').toLowerCase();
+      const offset = Number(url.searchParams.get('offset') ?? 0); const limit = Number(url.searchParams.get('limit') ?? 10);
+      const matched = cases.filter((item) => !term || item.case_number.toLowerCase().includes(term) || item.title.toLowerCase().includes(term));
+      return send(response, 200, { items: matched.slice(offset, offset + limit), total: matched.length, offset, limit });
+    }
+    // Flujo de análisis de un expediente (resumen → encolar → estado → informe PDF → revisión final).
+    const caseRoute = /^\/api\/v1\/cases\/([0-9a-f-]{36})\/(summary|analyze-async|artifacts\/([0-9a-f-]{36})\/download|reports\/([0-9a-f-]{36})\/finalize)$/.exec(path);
+    const uid = (n) => `00000000-0000-4000-a000-${String(n).padStart(12, '0')}`;
+    if (caseRoute) {
+      const [, caseId, action, artifactId] = caseRoute;
+      const found = cases.find((item) => item.id === caseId);
+      if (!found) return send(response, 404, { detail: 'Expediente no encontrado' });
+      if (action === 'summary') return send(response, 200, { id: found.id, case_number: found.case_number, title: found.title, created_at: found.created_at,
+        evidences: [{ id: uid(1), file_name: 'videollamada.mp4', sha256: 'a'.repeat(64), report: null }], audit: [] });
+      if (action === 'analyze-async') return send(response, 202, { status: 'queued', job_id: uid(9), case_id: caseId, evidence_id: uid(1), poll_after_ms: 2000, mode: 'local' });
+      if (action.endsWith('/finalize')) return send(response, 201, { case_id: caseId, evidence_id: uid(1), report_id: uid(2), objects: [{ id: uid(4), kind: 'pdf', sha256: 'c'.repeat(64), size_bytes: 1 }], retention_verified: true });
+      // Informe: el PDF real si se indica uno (TEST_REPORT_PDF), si no, un PDF mínimo válido.
+      const pdf = process.env.TEST_REPORT_PDF ? readFileSync(process.env.TEST_REPORT_PDF)
+        : Buffer.from(['%PDF-1.4', '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj 3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]>>endobj', 'trailer<</Root 1 0 R>>', '%%EOF'].join('\n'));
+      state.downloads = (state.downloads ?? 0) + 1; state.lastArtifact = artifactId;
+      response.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="pdf-${artifactId}.pdf"` });
+      return response.end(pdf);
+    }
+    if (path === `/api/v1/jobs/00000000-0000-4000-a000-000000000009`) {
+      state.polls = (state.polls ?? 0) + 1;
+      if (state.polls < 2) return send(response, 200, { status: 'processing', job_id: uid(9), poll_after_ms: 2000, progress: { stage: 'inference', message: 'Fotograma 12 de 24', current: 12, total: 24, events: [{ id: 'e1', message: 'Ejecutando los modelos sobre los fotogramas', timestamp: new Date().toISOString() }] } });
+      return send(response, 200, { status: 'completed', job_id: uid(9), result: { report_id: uid(2), prediction: 'Fake', verdict_forensic: 'MANIPULADO', confidence: 91.4, frames_analyzed: 24, faces_detected: 24,
+        archive: { case_id: cases[0].id, evidence_id: uid(1), report_id: uid(2), objects: [{ id: uid(3), kind: 'pdf', sha256: 'b'.repeat(64), size_bytes: 1 }] } } });
+    }
+    if (path === '/api/v1/cases' && request.method === 'POST') {
+      const created = { id: `00000000-0000-4000-9000-${String(cases.length + 1).padStart(12, '0')}`, case_number: body.case_number, title: body.title };
+      cases.unshift({ ...created, description: body.description ?? null, created_at: new Date().toISOString(), evidences: 0, verdict: null });
+      return send(response, 201, created);
+    }
     if (path === '/api/audit-logs/') return send(response, 200, [{ id: 'log-1', user_id: user.id, action: 'login_success', created_at: new Date().toISOString() }], { 'X-Total-Count': '1' });
     return send(response, 404, { detail: 'No encontrado' });
   });
@@ -104,5 +148,5 @@ export async function startTestServer() {
     rmSync(runtime, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
   if (!ready) { await close(); throw new Error(`Servidor de pruebas no disponible. ${log.slice(-2000)}`); }
-  return { origin, mockOrigin, users, listed, calls, state, close, logs: () => log };
+  return { origin, mockOrigin, users, listed, cases, calls, state, close, logs: () => log };
 }

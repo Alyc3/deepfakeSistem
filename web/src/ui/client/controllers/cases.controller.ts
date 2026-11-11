@@ -1,4 +1,18 @@
-type CaseRow = { id: string; case_number: string; title: string; created_at?: string };
+import { CASE_SCHEMA, RULES, checkValue } from "@domain/validation";
+import { liveValidation, restrictField, restrictForm } from "../validation";
+import { busy, loaded, refreshOnReturn, setBusy, skeleton } from "../loading";
+import { showToast } from "../toast";
+type CaseRow = { id: string; case_number: string; title: string; created_at?: string | null; description?: string | null; evidences?: number; verdict?: string | null };
+type CasePage = { items: CaseRow[]; total: number; offset: number; limit: number };
+const PAGE_SIZE = 10;
+const created_on = new Intl.DateTimeFormat("es", { day: "2-digit", month: "short", year: "numeric" });
+/** Estado de un expediente para la lista: dictamen si lo hay; si no, si ya tiene evidencia preservada. */
+function caseStatus(row: CaseRow): { label: string; tone: string } {
+  if (row.verdict === "MANIPULADO") return { label: "Manipulado", tone: "badge-alert" };
+  if (row.verdict === "SIN_MANIPULACION") return { label: "Sin manipulación", tone: "badge-moss" };
+  if (row.verdict) return { label: "Indicios", tone: "badge-review" };
+  return row.evidences ? { label: "Por analizar", tone: "badge-muted" } : { label: "Sin evidencia", tone: "badge-muted" };
+}
 type Archive = { case_id: string; evidence_id: string; report_id: string | null; objects: { id: string; kind: string }[] };
 type CaseSummary = { id: string; case_number: string; title: string; evidences: { id: string; file_name: string; sha256: string; report: null | { id: string; verdict: string; confidence: number | null; processing_time_seconds: number | null; frames_analyzed: number | null; faces_detected: number | null; completed_at: string | null; expert_conclusions: string | null; pdf_artifact_id: string | null; artifact_issue?: string | null; heatmaps: { image: string; second?: number; signal?: number }[] } }[]; audit: { action: string; timestamp: string; actor: string; hash_verified: boolean }[] };
 type JobProgress = { stage?: string; message?: string; current?: number; total?: number; events?: { id: string; message: string; timestamp: string }[] };
@@ -28,32 +42,40 @@ export function wireCases() {
   const referenceHash = document.getElementById("reference-hash") as HTMLInputElement;
   const preserveButton = document.getElementById("create-evidence-copy") as HTMLButtonElement;
   const analyzeButton = document.getElementById("analyze-case-evidence") as HTMLButtonElement;
-  const output = document.getElementById("case-analysis-output")!;
-  const result = document.getElementById("case-analysis-result")!;
   const notes = document.getElementById("expert-observations") as HTMLTextAreaElement;
   const finalize = document.getElementById("finalize-case-report") as HTMLButtonElement;
-  const auditLog = document.getElementById("case-audit-log")!;
+  const reviewPane = document.getElementById("analysis-review")!;
+  const reviewMessage = document.getElementById("analysis-review-message")!;
+  const reportPane = document.getElementById("analysis-report")!;
+  const reportViewer = document.getElementById("analysis-report-viewer") as HTMLIFrameElement;
+  const reportLoading = document.getElementById("analysis-report-loading")!;
+  const reportState = document.getElementById("analysis-report-state")!;
+  const reportOpen = document.getElementById("analysis-report-open") as HTMLAnchorElement;
+  const reportDownload = document.getElementById("analysis-report-download") as HTMLAnchorElement;
+  const statusCard = document.getElementById("analysis-status-card")!;
+  const verdictBadge = document.getElementById("analysis-verdict-badge")!;
+  let reportUrl: string | null = null;
   const analysisScreen = document.getElementById("analysis-screen")!;
   const analysisLog = document.getElementById("analysis-live-log")!;
   const analysisProgress = document.getElementById("analysis-progress")!;
   const progressFill = document.getElementById("analysis-progress-fill")!;
   const progressCaption = document.getElementById("analysis-progress-caption")!;
-  const analysisVerdict = document.getElementById("analysis-verdict")!;
   const progressEvents = new Set<string>();
   const currentRole = (JSON.parse(document.getElementById("view-app")!.getAttribute("data-user") ?? "{}")?.role?.name ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
   let selected: CaseRow | null = null; let file: File | null = null; let hash = ""; let archive: Archive | null = null; let reportId = "";
   let previewUrl: string | null = null;
   let analysisInFlight = false;
 
-  const appendAnalysisLog = (message: string, timestamp = new Date().toISOString(), failed = false) => {
+  /** `done`: el paso ya terminó (marca ✓); si no, queda como paso en curso con el indicador giratorio. */
+  const appendAnalysisLog = (message: string, timestamp = new Date().toISOString(), failed = false, done = false) => {
     analysisLog.querySelector(".is-current")?.classList.remove("is-current");
-    const entry = document.createElement("li"); entry.className = `analysis-log-entry${failed ? " is-error" : " is-current"}`;
-    const time = document.createElement("time"); time.dateTime = timestamp; time.textContent = new Date(timestamp).toLocaleTimeString();
+    const entry = document.createElement("li"); entry.className = `analysis-log-entry${failed ? " is-error" : done ? "" : " is-current"}`;
+    const time = document.createElement("time"); time.dateTime = timestamp; time.textContent = new Date(timestamp).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
     const text = document.createElement("span"); text.textContent = message; entry.append(time, text); analysisLog.append(entry); analysisLog.scrollTop = analysisLog.scrollHeight;
   };
   const showProgress = (progress: JobProgress | null, status = "queued") => {
     const stages: Record<string, [string, string]> = {
-      queued: ["EN COLA", "Esperando al worker de inferencia…"], verification: ["VERIFICACIÓN FORENSE", "Comprobando la copia preservada…"],
+      queued: ["EN COLA", "Esperando al motor de análisis…"], verification: ["VERIFICACIÓN FORENSE", "Comprobando la copia preservada…"],
       extracting: ["PREPARACIÓN DEL VIDEO", "Extrayendo fotogramas para el análisis…"], inference: ["MODELOS EN EJECUCIÓN", "Analizando la evidencia…"],
       heatmaps: ["MAPAS DE CALOR", "Preparando las explicaciones visuales…"], archive: ["ARCHIVO FORENSE", "Sellando y guardando el informe…"],
       completed: ["ANÁLISIS COMPLETADO", "El dictamen está listo para revisión pericial."],
@@ -61,7 +83,7 @@ export function wireCases() {
     const [label, title] = stages[progress?.stage ?? status] ?? stages.queued;
     document.getElementById("analysis-phase-label")!.textContent = label;
     document.getElementById("analysis-status-title")!.textContent = title;
-    document.getElementById("analysis-status-detail")!.textContent = progress?.message ?? (status === "queued" ? "La tarea está en cola y se ejecutará cuando Celery la reciba." : "Consultando el estado del trabajo…");
+    document.getElementById("analysis-status-detail")!.textContent = progress?.message ?? (status === "queued" ? "El análisis está en cola y comenzará en cuanto el motor quede libre." : "Consultando el estado del trabajo…");
     if (progress?.current != null && progress.total != null && progress.total > 0) {
       const percent = Math.max(0, Math.min(100, Math.round(progress.current / progress.total * 100)));
       analysisProgress.classList.remove("is-indeterminate"); analysisProgress.setAttribute("aria-valuenow", String(percent)); progressFill.style.width = `${percent}%`;
@@ -73,52 +95,129 @@ export function wireCases() {
     }
     for (const event of progress?.events ?? []) if (!progressEvents.has(event.id)) { progressEvents.add(event.id); appendAnalysisLog(event.message, event.timestamp); }
   };
-  const renderAnalysisVerdict = (data: any) => {
-    analysisVerdict.hidden = false;
-    const verdict = data.verdict_forensic ?? (data.prediction === "Fake" ? "MANIPULADO" : data.prediction === "Real" ? "SIN MANIPULACIÓN" : "ANTECEDENTES");
-    const badge = document.getElementById("analysis-verdict-badge")!; badge.textContent = verdict;
-    badge.className = `verdict-badge${verdict === "SIN_MANIPULACION" || verdict === "SIN MANIPULACIÓN" ? " is-real" : verdict === "ANTECEDENTES" ? " is-review" : ""}`;
-    document.getElementById("analysis-verdict-copy")!.textContent = `Confianza del modelo: ${data.confidence == null ? "No disponible" : `${data.confidence}%`}. El resultado requiere revisión del perito.`;
-    const metrics = document.getElementById("analysis-verdict-metrics")!; metrics.replaceChildren();
-    for (const [label, value] of [["Confianza", data.confidence == null ? "—" : `${data.confidence}%`], ["Fotogramas", data.frames_analyzed ?? "—"], ["Rostros", data.faces_detected ?? "—"], ["Tiempo", data.processing_time_seconds == null ? "—" : `${data.processing_time_seconds} s`]] as [string, string | number][]) {
-      const cell = document.createElement("div"); const dt = document.createElement("dt"); dt.textContent = label; const dd = document.createElement("dd"); dd.textContent = String(value); cell.append(dt, dd); metrics.append(cell);
-    }
-    const heatmaps = document.getElementById("analysis-heatmaps")!; heatmaps.replaceChildren();
-    const frames = data.explanation?.frames ?? [];
-    const visuals = frames.length ? frames.slice(0, 12) : data.explanation?.image ? [{ image: data.explanation.image }] : [];
-    for (const [index, frame] of visuals.entries()) {
-      if (!frame.image) continue;
-      const figure = document.createElement("figure"); const image = document.createElement("img"); image.src = frame.image;
-      image.alt = `Fotograma ${index + 1} con mapa de calor`;
-      const caption = document.createElement("figcaption"); caption.textContent = frame.second == null ? `Fotograma destacado ${index + 1}` : `Fotograma ${index + 1} · ${frame.second} s`;
-      figure.append(image, caption); heatmaps.append(figure);
-    }
-    heatmaps.hidden = visuals.length === 0;
-    document.getElementById("analysis-result-note")!.textContent = data.suspicious_seconds?.length ? `Momentos señalados: ${data.suspicious_seconds.map((item: { second: number }) => `${item.second} s`).join(" · ")}` : "No se señalaron momentos específicos; revisa el fotograma destacado y el expediente.";
+  const VERDICT_TEXT: Record<string, [string, string]> = {
+    MANIPULADO: ["Manipulado", ""], SIN_MANIPULACION: ["Sin manipulación", " is-real"], ANTECEDENTES: ["Indicios", " is-review"],
+  };
+  /** Resumen de una línea en la tarjeta de estado; el detalle completo está en el informe PDF de la derecha. */
+  const renderVerdict = (data: any) => {
+    const key = data.verdict_forensic ?? (data.prediction === "Fake" ? "MANIPULADO" : data.prediction === "Real" ? "SIN_MANIPULACION" : "ANTECEDENTES");
+    const [label, tone] = VERDICT_TEXT[key] ?? VERDICT_TEXT.ANTECEDENTES;
+    verdictBadge.textContent = label.toUpperCase(); verdictBadge.className = `verdict-badge${tone}`; verdictBadge.hidden = false;
+    document.getElementById("analysis-status-title")!.textContent = `Dictamen: ${label.toLowerCase()}`;
+    document.getElementById("analysis-status-detail")!.textContent = `Confianza del modelo: ${data.confidence == null ? "no disponible" : `${data.confidence} %`}. Revisa el informe y registra tu conclusión para emitir la versión final.`;
+    statusCard.classList.add("is-complete");
+  };
+  /** Descarga el PDF con la sesión y lo muestra en el visor como blob (sin abrir pestañas ni descargas). */
+  const showReport = async (caseId: string, artifactId: string, final: boolean, caseNumber: string) => {
+    reportPane.hidden = false; reportLoading.hidden = false; reportLoading.textContent = "Cargando informe…"; setBusy(reportLoading, true);
+    try {
+      const response = await fetch(`${base}/${id(caseId)}/artifacts/${id(artifactId)}/download`, { credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) { const failure = await response.json().catch(() => ({})); throw new Error(failure.detail ?? "No se pudo cargar el informe."); }
+      const pdf = new Blob([await response.arrayBuffer()], { type: "application/pdf" });
+      if (reportUrl) URL.revokeObjectURL(reportUrl);
+      reportUrl = URL.createObjectURL(pdf);
+      reportViewer.src = `${reportUrl}#view=FitH`;
+      reportOpen.href = reportUrl; reportDownload.href = reportUrl;
+      reportDownload.download = `informe-${caseNumber}${final ? "" : "-borrador"}.pdf`;
+      reportState.textContent = final ? "Versión final" : "Borrador"; reportState.className = `badge ${final ? "badge-moss" : "badge-muted"}`;
+      reportLoading.hidden = true;
+    } catch (error) { reportLoading.textContent = error instanceof Error ? error.message : "No se pudo cargar el informe."; }
+    finally { setBusy(reportLoading, false); }
+  };
+  /** Identificador del PDF más reciente del informe: el del recibo o, si no viene, el del resumen del expediente. */
+  const reportPdf = async (caseId: string, receipt: Archive | null) => {
+    const fromReceipt = receipt?.objects.filter(row => row.kind === "pdf").at(-1)?.id;
+    if (fromReceipt) return fromReceipt;
+    const summary = await request(`${base}/${id(caseId)}/summary`) as CaseSummary;
+    return summary.evidences.find(item => item.report?.pdf_artifact_id)?.report?.pdf_artifact_id ?? null;
+  };
+  const resetReport = () => {
+    reportPane.hidden = true; reviewPane.hidden = true; verdictBadge.hidden = true; statusCard.classList.remove("is-complete");
+    reportViewer.removeAttribute("src"); if (reportUrl) URL.revokeObjectURL(reportUrl); reportUrl = null;
+    notes.value = ""; reviewMessage.hidden = true; finalize.disabled = true;
   };
 
-  const refresh = async () => {
-    try {
-      const cases = await request(base) as CaseRow[];
-      list.replaceChildren();
-      if (!cases.length) { list.innerHTML = '<p class="empty-state">Aún no hay expedientes. Crea el primero para comenzar.</p>'; return; }
-      for (const row of cases) {
-        const card = document.createElement("article"); card.className = "case-card";
-        const details = document.createElement("div"); const strong = document.createElement("strong"); strong.textContent = row.title; const small = document.createElement("small"); small.textContent = row.case_number; details.append(strong, small);
-        const button = document.createElement("button"); button.className = "ghost-button"; button.textContent = "Abrir caso"; button.addEventListener("click", () => void openCase(row)); card.append(details, button); list.append(card);
-      }
-    } catch (error) { list.textContent = error instanceof Error ? error.message : "No se pudieron cargar los casos."; }
+  const search = document.getElementById("cases-search") as HTMLInputElement;
+  const pager = document.getElementById("cases-pager")!;
+  const prevPage = document.getElementById("cases-prev") as HTMLButtonElement;
+  const nextPage = document.getElementById("cases-next") as HTMLButtonElement;
+  const cell = (tag: string, className: string, text = "") => { const node = document.createElement(tag); node.className = className; node.textContent = text; return node; };
+  /** Toda la fila abre el expediente: un clic, sin buscar un botón. */
+  const caseRow = (row: CaseRow, isNew = false) => {
+    const button = document.createElement("button"); button.type = "button"; button.className = `case-row${isNew ? " is-new" : ""}`;
+    button.setAttribute("aria-label", `Abrir expediente ${row.case_number}: ${row.title}`);
+    const main = cell("span", "case-row-main");
+    main.append(cell("span", "case-row-number", row.case_number), cell("strong", "case-row-title", row.title));
+    if (row.description) main.append(cell("span", "case-row-description", row.description));
+    const status = caseStatus(row);
+    const evidences = cell("span", "case-row-evidences", String(row.evidences ?? 0)); evidences.dataset.label = "Evidencias";
+    const badge = cell("span", "case-row-status"); badge.append(cell("span", `badge ${status.tone}`, status.label));
+    const date = cell("span", "case-row-date", row.created_at ? created_on.format(new Date(row.created_at)) : "—");
+    const open = cell("span", "case-row-open", "Abrir");
+    button.append(main, evidences, badge, date, open);
+    button.addEventListener("click", async () => {
+      if (button.disabled) return;
+      button.disabled = true; setBusy(open, true); open.textContent = "Abriendo";
+      try { await openCase(row); } finally { button.disabled = false; setBusy(open, false); open.textContent = "Abrir"; }
+    });
+    return button;
   };
+  let listGeneration = 0; let listLoaded = false; let offset = 0; let term = "";
+  /**
+   * Recarga la página actual de la lista. Solo pinta la respuesta más reciente: una carga anterior que
+   * llegue tarde (p. ej. la inicial, si la base tardó en responder) no borra un expediente recién creado.
+   * `created` se garantiza en la primera página y se resalta al aparecer.
+   */
+  const refresh = async (created?: CaseRow) => {
+    const request_id = ++listGeneration;
+    if (!listLoaded) skeleton(list, 4, "card");
+    const params = new URLSearchParams({ offset: String(offset), limit: String(PAGE_SIZE) });
+    if (term) params.set("q", term);
+    try {
+      const page = await request(`${base}?${params}`) as CasePage;
+      if (request_id !== listGeneration) return;
+      const rows = page.items;
+      if (created && offset === 0 && !term && !rows.some(row => row.id === created.id)) { rows.unshift(created); if (rows.length > PAGE_SIZE) rows.pop(); page.total += 1; }
+      // Si la página quedó vacía (p. ej. tras una búsqueda), se vuelve a la anterior.
+      if (!rows.length && offset > 0) { offset = Math.max(0, offset - PAGE_SIZE); return refresh(); }
+      listLoaded = true; loaded(list);
+      document.getElementById("cases-count")!.textContent = page.total ? String(page.total) : "";
+      if (!rows.length) {
+        const empty = cell("div", "empty-state case-empty");
+        empty.append(cell("h3", "", term ? "Sin resultados" : "Aún no hay expedientes"), cell("p", "", term ? `Ningún expediente coincide con «${term}».` : "Crea el primero con el formulario de arriba."));
+        list.replaceChildren(empty); pager.hidden = true; return;
+      }
+      list.replaceChildren(...rows.map(row => caseRow(row, row.id === created?.id)));
+      const pages = Math.max(1, Math.ceil(page.total / PAGE_SIZE));
+      pager.hidden = page.total <= PAGE_SIZE;
+      document.getElementById("cases-range")!.textContent = `${offset + 1}–${offset + rows.length} de ${page.total}`;
+      document.getElementById("cases-page-label")!.textContent = `${Math.floor(offset / PAGE_SIZE) + 1} / ${pages}`;
+      prevPage.disabled = offset === 0; nextPage.disabled = offset + rows.length >= page.total;
+    } catch (error) {
+      if (request_id !== listGeneration) return;
+      loaded(list); pager.hidden = true;
+      list.replaceChildren(cell("p", "inline-message", error instanceof Error ? error.message : "No se pudieron cargar los casos."));
+    }
+  };
+  prevPage.addEventListener("click", () => { offset = Math.max(0, offset - PAGE_SIZE); void refresh(); });
+  nextPage.addEventListener("click", () => { offset += PAGE_SIZE; void refresh(); });
+  let typing: ReturnType<typeof setTimeout> | undefined;
+  search.addEventListener("input", () => {
+    clearTimeout(typing);
+    typing = setTimeout(() => { const next = search.value.trim(); if (next === term) return; term = next; offset = 0; void refresh(); }, 300);
+  });
   const openCase = async (row: CaseRow) => {
     selected = row; file = null; hash = ""; archive = null; fileInput.value = ""; preserveButton.disabled = true; analyzeButton.disabled = true;
-    referenceHash.value = ""; reportId = ""; output.hidden = true;
+    referenceHash.value = ""; reportId = ""; resetReport();
     if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = null; evidencePreview.hidden = true;
     workflow.hidden = true; analysisScreen.hidden = true; const summaryPanel = document.getElementById("case-summary")!; summaryPanel.hidden = true;
     document.getElementById("case-view-number")!.textContent = row.case_number;
     document.getElementById("case-view-title")!.textContent = row.title;
-    casesBrowser.hidden = true; analysisView.hidden = false;
+    message.textContent = "";
     try {
+      // La vista cambia cuando el expediente ya está cargado; mientras, el botón «Abriendo…» indica la espera.
       const summary = await request(`${base}/${id(row.id)}/summary`) as CaseSummary;
+      casesBrowser.hidden = true; analysisView.hidden = false;
       const completed = summary.evidences.find(item => item.report)?.report;
       if (completed) { renderSummary(summary, summaryPanel); summaryPanel.hidden = false; summaryPanel.scrollIntoView({ behavior: "smooth" }); return; }
       workflow.hidden = false;
@@ -128,15 +227,34 @@ export function wireCases() {
       workflow.scrollIntoView({ behavior: "smooth" });
     } catch (error) { message.textContent = error instanceof Error ? error.message : "No se pudo abrir el caso."; analysisView.hidden = true; casesBrowser.hidden = false; }
   };
-  void refresh(); document.getElementById("cases-refresh")!.addEventListener("click", () => void refresh());
+  void refresh();
+  // Sin botón «Actualizar»: la lista se recarga sola al volver a la pestaña y tras cada acción.
+  refreshOnReturn(() => { if (!casesBrowser.hidden) void refresh(); });
   closeAnalysisButton.addEventListener("click", () => { if (analysisInFlight) return; analysisView.hidden = true; casesBrowser.hidden = false; if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = null; void refresh(); });
+  restrictForm(form, CASE_SCHEMA);
+  restrictField(referenceHash, RULES.sha256);
+  const liveCase = liveValidation(form, CASE_SCHEMA, { required: ["case_number", "title"] });
+  // La descripción ocupa una línea y crece con el texto (sin barra de scroll ni alto fijo).
+  const description = form.elements.namedItem("description") as HTMLTextAreaElement;
+  const grow = () => { description.style.height = "auto"; description.style.height = `${Math.min(description.scrollHeight + 2, 160)}px`; };
+  description.addEventListener("input", grow);
+  form.addEventListener("input", () => { message.textContent = ""; });
   form.addEventListener("submit", async (event) => {
-    event.preventDefault(); const data = new FormData(form);
-    try { const response = await request(base, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(data)) }); message.textContent = `Expediente ${response.case_number} creado.`; form.reset(); await refresh(); }
+    event.preventDefault();
+    if (!liveCase.validate()) return;
+    const data = new FormData(form); message.textContent = "";
+    const submit = form.querySelector<HTMLButtonElement>('[type="submit"]');
+    try {
+      const created = await busy(submit, () => request(base, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(data)) }), "Creando…") as CaseRow;
+      form.reset(); description.style.height = ""; showToast(`Expediente ${created.case_number} creado.`);
+      // El nuevo aparece arriba del todo: se vuelve a la primera página y se limpia la búsqueda.
+      offset = 0; term = ""; search.value = "";
+      await refresh({ ...created, evidences: 0, verdict: null, created_at: new Date().toISOString() });
+    }
     catch (error) { message.textContent = error instanceof Error ? error.message : "No se pudo crear el caso."; }
   });
   fileInput.addEventListener("change", async () => {
-    file = fileInput.files?.[0] ?? null; hash = ""; archive = null; analyzeButton.disabled = true; preserveButton.disabled = true; output.hidden = true;
+    file = fileInput.files?.[0] ?? null; hash = ""; archive = null; analyzeButton.disabled = true; preserveButton.disabled = true;
     if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = null;
     if (!file) { hashState.textContent = "Selecciona una evidencia para calcular SHA-256."; return; }
     previewUrl = URL.createObjectURL(file); evidencePreview.hidden = false;
@@ -144,38 +262,38 @@ export function wireCases() {
     if (videoPreview.hidden) videoPreview.removeAttribute("src"); else { videoPreview.src = previewUrl; videoPreview.load(); }
     if (imagePreview.hidden) imagePreview.removeAttribute("src"); else imagePreview.src = previewUrl;
     previewCaption.textContent = `${file.name} · ${(file.size / (1024 * 1024)).toFixed(2)} MB`;
-    hashState.textContent = "Calculando huella SHA-256…";
+    hashState.textContent = "Calculando huella SHA-256…"; setBusy(hashState, true);
     try { const bytes = await crypto.subtle.digest("SHA-256", await file.arrayBuffer()); hash = [...new Uint8Array(bytes)].map(v => v.toString(16).padStart(2, "0")).join(""); hashState.textContent = `SHA-256 calculado: ${hash}. Ingresa el hash de referencia para habilitar la preservación.`; updatePreserve(); }
     catch { hashState.textContent = "No fue posible calcular el hash. Se requiere un navegador con Web Crypto."; }
+    finally { setBusy(hashState, false); }
   });
   document.getElementById("analysis-back")!.addEventListener("click", () => { analysisScreen.hidden = true; workflow.hidden = false; });
-  document.getElementById("analysis-review-button")!.addEventListener("click", () => { analysisScreen.hidden = true; workflow.hidden = false; output.hidden = false; output.scrollIntoView({ behavior: "smooth", block: "start" }); });
   const updatePreserve = () => { const same = referenceHash.value.trim().toLowerCase() === hash && /^[0-9a-f]{64}$/.test(hash); preserveButton.disabled = !selected || !file || !same; if (file && hash && referenceHash.value && !same) hashState.textContent = `Hash no coincide. Calculado: ${hash}`; else if (same) hashState.textContent = `Hash SHA-256 coincide: ${hash}. El servidor volverá a verificarlo al recibir el archivo.`; };
   referenceHash.addEventListener("input", updatePreserve);
   preserveButton.addEventListener("click", async () => {
-    if (!selected || !file || !hash) return; preserveButton.disabled = true; preserveButton.textContent = "Preservando…";
+    if (!selected || !file || !hash) return; preserveButton.disabled = true; preserveButton.textContent = "Preservando…"; setBusy(preserveButton, true);
     const body = new FormData(); body.append("file", file); body.append("expected_sha256", hash);
     try { archive = await request(`${base}/${id(selected.id)}/ingest`, { method: "POST", body }) as Archive; hashState.textContent = `Hash verificado por el servidor. Original y copia de trabajo preservados. SHA-256 ${hash}`; analyzeButton.disabled = false;
-      const original = archive.objects.find(row => row.kind === "original"); const originalArea = document.getElementById("case-report-download")!;
+      const original = archive.objects.find(row => row.kind === "original"); const originalArea = document.getElementById("case-original-download")!;
       if (original && ["ADMIN", "ADMINISTRADOR", "GERENTE_GENERAL"].includes(currentRole)) { const link = document.createElement("a"); link.className = "ghost-button"; link.href = `${base}/${id(archive.case_id)}/artifacts/${id(original.id)}/download`; link.textContent = "Descargar original (administración)"; link.setAttribute("download", ""); originalArea.replaceChildren(link); }
       else originalArea.textContent = "Original preservado. Su descarga requiere autorización administrativa.";
       await refresh(); }
     catch (error) { hashState.textContent = error instanceof Error ? error.message : "No se pudo preservar la evidencia."; preserveButton.disabled = false; }
-    finally { preserveButton.textContent = "Guardar original y crear copia"; }
+    finally { preserveButton.textContent = "Guardar original y crear copia"; setBusy(preserveButton, false); }
   });
   analyzeButton.addEventListener("click", async () => {
     if (!selected || !archive) return; analysisInFlight = true; closeAnalysisButton.disabled = true; analysisBackButton.disabled = true; analyzeButton.disabled = true; analyzeButton.textContent = "Analizando copia…";
     const activeCase = selected;
-    progressEvents.clear(); analysisLog.replaceChildren(); analysisVerdict.hidden = true;
+    progressEvents.clear(); analysisLog.replaceChildren(); resetReport();
     document.getElementById("analysis-case-number")!.textContent = activeCase.case_number;
     document.getElementById("analysis-case-title")!.textContent = activeCase.title;
     document.getElementById("analysis-job-label")!.textContent = "ENVIANDO TAREA";
     document.getElementById("analysis-phase-label")!.textContent = "EN COLA";
-    document.getElementById("analysis-status-title")!.textContent = "Enviando análisis al worker…";
+    document.getElementById("analysis-status-title")!.textContent = "Enviando el análisis al motor…";
     document.getElementById("analysis-status-detail")!.textContent = "La tarea analizará exclusivamente la copia preservada.";
     analysisProgress.classList.add("is-indeterminate"); analysisProgress.removeAttribute("aria-valuenow"); progressFill.style.width = "";
-    progressCaption.textContent = "Esperando confirmación del worker…";
-    appendAnalysisLog("Solicitud enviada; esperando confirmación de Celery.");
+    progressCaption.textContent = "Esperando confirmación del motor…";
+    appendAnalysisLog("Solicitud enviada; esperando confirmación del motor de análisis.");
     workflow.hidden = true; analysisScreen.hidden = false; analysisScreen.scrollIntoView({ behavior: "smooth", block: "start" });
     try {
       const body = new FormData(); body.append("evidence_id", archive.evidence_id);
@@ -187,14 +305,17 @@ export function wireCases() {
         await new Promise(resolve => setTimeout(resolve, 2000));
         data = await request(`/api/forensics/jobs/${id(queued.job_id)}`); showProgress(data.progress ?? null, data.status);
         if (data.status === "completed" && data.result) break;
-        if (data.status === "failed") throw new Error(data.detail ?? "El worker reportó un fallo durante el análisis.");
+        if (data.status === "failed") throw new Error(data.detail ?? "El motor reportó un fallo durante el análisis.");
       }
       if (!data?.result) throw new Error("Se agotó el tiempo de espera visual. Revisa el estado del trabajo antes de volver a iniciarlo.");
       reportId = data.result.report_id; archive = data.result.archive ?? archive;
-      result.textContent = `Dictamen: ${data.result.verdict_forensic ?? data.result.prediction}\nConfianza: ${data.result.confidence ?? "—"}%\nFotogramas analizados: ${data.result.frames_analyzed ?? "—"}\nRostros detectados: ${data.result.faces_detected ?? "—"}\nTiempo del modelo: ${data.result.processing_time_seconds ?? "—"} s`;
-      output.hidden = false; finalize.disabled = !reportId;
       showProgress({ stage: "completed", message: "Resultado guardado; está listo para la revisión del perito." }, "completed");
-      appendAnalysisLog("Dictamen disponible. Continúa con las observaciones periciales."); renderAnalysisVerdict(data.result);
+      appendAnalysisLog("Dictamen disponible. El informe completo está en el panel derecho.", undefined, false, true); renderVerdict(data.result);
+      reviewPane.hidden = false; finalize.disabled = true;
+      const pdfId = await reportPdf(activeCase.id, archive);
+      if (pdfId) await showReport(activeCase.id, pdfId, false, activeCase.case_number);
+      else { reportPane.hidden = false; reportLoading.textContent = "El informe se archivó, pero no se encontró su PDF."; }
+      reportPane.scrollIntoView({ behavior: "smooth", block: "nearest" });
       document.getElementById("analysis-job-label")!.textContent = `TRABAJO ${queued.job_id} · COMPLETADO`;
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Falló el análisis.";
@@ -205,16 +326,22 @@ export function wireCases() {
     }
     finally { analysisInFlight = false; closeAnalysisButton.disabled = false; analysisBackButton.disabled = false; analyzeButton.disabled = false; analyzeButton.textContent = "Analizar copia"; }
   });
-  notes.addEventListener("input", () => { finalize.disabled = !reportId || notes.value.trim().length < 10; });
+  notes.addEventListener("input", () => { notes.setCustomValidity(""); reviewMessage.hidden = true; finalize.disabled = !reportId || notes.value.trim().length < 10; });
   finalize.addEventListener("click", async () => {
-    if (!selected || !archive || !reportId || notes.value.trim().length < 10) return; finalize.disabled = true; finalize.textContent = "Generando PDF…";
-    try { const finalizedArchive = await request(`${base}/${id(selected.id)}/reports/${id(reportId)}/finalize`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expert_conclusions: notes.value.trim() }) }) as Archive; archive = finalizedArchive;
-      const pdf = finalizedArchive.objects.find(row => row.kind === "pdf"); if (!pdf) throw new Error("El reporte fue archivado, pero la respuesta no incluyó el PDF."); const anchor = document.createElement("a"); anchor.className = "ghost-button"; anchor.href = `${base}/${id(finalizedArchive.case_id)}/artifacts/${id(pdf.id)}/download`; anchor.textContent = "Descargar informe PDF"; anchor.setAttribute("download", ""); document.getElementById("case-report-download")!.append(anchor);
-      const events = await request(`${base}/${id(selected.id)}/custody-log`) as { action: string; timestamp: string; hash_verified: boolean }[];
-      auditLog.replaceChildren(); const title = document.createElement("h3"); title.textContent = "Auditoría del expediente"; auditLog.append(title);
-      for (const item of events) { const line = document.createElement("p"); line.textContent = `${new Date(item.timestamp).toLocaleString()} · ${item.action} · hash ${item.hash_verified ? "verificado" : "pendiente/no verificado"}`; auditLog.append(line); }
-    } catch (error) { hashState.textContent = error instanceof Error ? error.message : "No se pudo generar el PDF."; }
-    finally { finalize.textContent = "Guardar revisión y generar PDF"; finalize.disabled = false; }
+    if (!selected || !archive || !reportId) return;
+    const conclusions = checkValue(RULES.conclusions, notes.value, true);
+    notes.setCustomValidity(conclusions.error ?? "");
+    if (conclusions.error) { notes.reportValidity(); return; } finalize.disabled = true; finalize.textContent = "Generando informe…"; setBusy(finalize, true); reviewMessage.hidden = true;
+    const activeCase = selected;
+    try {
+      const finalizedArchive = await request(`${base}/${id(activeCase.id)}/reports/${id(reportId)}/finalize`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expert_conclusions: notes.value.trim() }) }) as Archive; archive = finalizedArchive;
+      const pdf = finalizedArchive.objects.find(row => row.kind === "pdf"); if (!pdf) throw new Error("El reporte fue archivado, pero la respuesta no incluyó el PDF.");
+      // El visor pasa del borrador a la versión final, que ya incluye la conclusión y la cadena de custodia.
+      await showReport(finalizedArchive.case_id, pdf.id, true, activeCase.case_number);
+      reviewMessage.textContent = "Revisión guardada. El informe final reemplaza al borrador."; reviewMessage.classList.add("form-success"); reviewMessage.hidden = false;
+      appendAnalysisLog("Revisión pericial archivada; informe final emitido.", undefined, false, true);
+    } catch (error) { reviewMessage.classList.remove("form-success"); reviewMessage.textContent = error instanceof Error ? error.message : "No se pudo generar el informe."; reviewMessage.hidden = false; }
+    finally { finalize.textContent = "Guardar revisión"; finalize.disabled = false; setBusy(finalize, false); }
   });
 
   function renderSummary(summary: CaseSummary, target: HTMLElement) {

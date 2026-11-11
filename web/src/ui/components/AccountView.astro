@@ -5,78 +5,109 @@ interface Props { user: IdentityUser; section: string; }
 const { user, section } = Astro.props;
 const name = fullName(user);
 const initials = name.split(/\s+/).slice(0, 2).map((value) => value[0]).join("").toUpperCase();
+const status = user.status === "ACTIVO" ? "Cuenta activa" : `Cuenta ${user.status.toLowerCase()}`;
+// Las fechas se reescriben en la zona horaria del navegador (account.controller); esto es solo el valor inicial.
+const day = (iso?: string | null) => iso ? new Intl.DateTimeFormat("es", { dateStyle: "medium", timeZone: "UTC" }).format(new Date(iso)) : null;
 ---
+<div class="account-page">
 <div class="page-heading"><div><p class="eyebrow">Mi cuenta</p><h1>{section === "perfil" ? "Mi perfil" : "Seguridad"}</h1><p class="page-description">{section === "perfil" ? "Tu identidad dentro del equipo." : "Contraseña, verificación en dos pasos y sesiones abiertas."}</p></div></div>
 {section === "perfil" ? (
-  <div class="account-grid">
-    <section class="surface profile-summary">
-      <div class="profile-avatar">{initials}</div><h2 id="profile-name">{name}</h2><p>{user.email}</p>
-      <span class="badge badge-moss">{user.role.name}</span>
-      <div class="profile-status"><span class="status-pip"></span>Cuenta activa</div>
+  <>
+    <section class="surface account-identity" aria-label="Identidad">
+      <span id="profile-initials" class="profile-avatar" aria-hidden="true">{initials}</span>
+      <div class="account-identity-copy"><h2 id="profile-name">{name}</h2><p>{user.email}</p></div>
+      <div class="account-identity-meta"><span class="badge badge-moss">{user.role.name}</span><span class="profile-status"><span class="status-pip"></span>{status}</span></div>
     </section>
-    <section class="surface">
-      <div class="surface-heading"><h2>Información personal</h2></div>
-      <form id="profile-form" class="sheet-form account-form">
-        <div class="form-grid">
-          <label class="field"><span>Nombre</span><input class="text-input" name="first_name" value={user.first_name ?? ""} maxlength="100" autocomplete="given-name" /></label>
-          <label class="field"><span>Apellido</span><input class="text-input" name="last_name" value={user.last_name ?? ""} maxlength="100" autocomplete="family-name" /></label>
+
+    <div class="account-grid">
+      <section class="surface account-card" aria-labelledby="profile-personal-title">
+        <header class="account-card-head"><Icon name="user" size={16} /><h2 id="profile-personal-title">Información personal</h2></header>
+        <form id="profile-form" class="account-card-body" novalidate>
+          <div class="account-fields">
+            <label class="field"><span>Nombre</span><input class="text-input" name="first_name" value={user.first_name ?? ""} maxlength="100" autocomplete="given-name" /></label>
+            <label class="field"><span>Apellido</span><input class="text-input" name="last_name" value={user.last_name ?? ""} maxlength="100" autocomplete="family-name" /></label>
+            <label class="field field-wide"><span>Teléfono</span><input class="text-input" name="phone_number" type="tel" inputmode="tel" value={user.phone_number ?? ""} maxlength="20" autocomplete="tel" placeholder="+593 99 999 9999" /></label>
+          </div>
+          <div class="account-card-actions">
+            <p id="profile-message" class="form-error" role="status" hidden></p>
+            <button class="primary-button" type="submit" disabled>Guardar cambios</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="surface account-card" aria-labelledby="profile-account-title">
+        <header class="account-card-head"><Icon name="shield" size={16} /><h2 id="profile-account-title">Datos de la cuenta</h2></header>
+        <div class="account-card-body">
+          <dl class="account-facts">
+            <div><dt>Identificación</dt><dd>{user.identifier || <span class="account-muted">Sin registrar</span>}</dd></div>
+            <div><dt>Verificación en dos pasos</dt><dd>{user.mfa_enabled ? "Activa" : <span class="account-muted">Inactiva</span>}<a class="account-link" href="/app/seguridad">Gestionar</a></dd></div>
+            <div><dt>Último acceso</dt><dd>{user.last_login_at ? <time data-local-time datetime={user.last_login_at}>{day(user.last_login_at)}</time> : <span class="account-muted">Sin registro</span>}</dd></div>
+          </dl>
+          <p class="account-card-note">El correo, la identificación y el rol los cambia un administrador.</p>
         </div>
-        <label class="field"><span>Teléfono</span><input class="text-input" name="phone_number" type="tel" value={user.phone_number ?? ""} maxlength="30" autocomplete="tel" placeholder="+593 99 999 9999" /></label>
-        <dl class="profile-details profile-details--compact">
-          {[["Correo electrónico", user.email], ["Identificación", user.identifier], ["Rol", user.role.name]].map(([label, value]) => <div><dt>{label}</dt><dd>{value || "Sin registrar"}</dd></div>)}
-        </dl>
-        <p class="surface-note">El correo, la identificación y el rol los cambia un administrador.</p>
-        <p id="profile-message" class="form-error" role="status" hidden></p>
-        <div class="sheet-actions"><button class="primary-button" type="submit">Guardar cambios</button></div>
-      </form>
-    </section>
-  </div>
+      </section>
+    </div>
+  </>
 ) : (
-  <div class="security-grid">
-    <section class="surface security-card">
-      <span class="card-icon"><Icon name="lock" size={24} /></span><h2>Contraseña</h2>
-      <p>Al cambiarla se cierran tus demás sesiones. Esta se mantiene abierta.</p>
-      <form id="password-form" class="sheet-form account-form">
-        <label class="field"><span>Contraseña actual</span><input class="text-input" name="current_password" type="password" autocomplete="current-password" required maxlength="128" /></label>
-        <label class="field"><span>Nueva contraseña</span><input class="text-input" name="new_password" type="password" autocomplete="new-password" required maxlength="128" /></label>
-        <label class="field"><span>Repetir nueva contraseña</span><input class="text-input" name="confirmation" type="password" autocomplete="new-password" required maxlength="128" /></label>
-        <p id="password-message" class="form-error" role="status" hidden></p>
-        <div class="security-actions"><button class="ghost-button" type="submit">Cambiar contraseña</button></div>
-      </form>
-      <form id="account-recovery-form" class="account-inline"><button class="link-button" type="submit">¿No recuerdas la actual? Recibe un enlace por correo</button><p id="account-recovery-message" class="inline-message" role="status"></p></form>
-    </section>
+  <>
+    <div class="account-grid">
+      <section class="surface account-card" aria-labelledby="password-title">
+        <header class="account-card-head"><Icon name="lock" size={16} /><h2 id="password-title">Contraseña</h2></header>
+        <form id="password-form" class="account-card-body">
+          <p class="account-card-lead">Al cambiarla se cierran tus demás sesiones; esta se mantiene abierta.</p>
+          <div class="account-fields">
+            <label class="field field-wide"><span>Contraseña actual</span><input class="text-input" name="current_password" type="password" autocomplete="current-password" required maxlength="128" /></label>
+            <label class="field"><span>Nueva contraseña</span><input class="text-input" name="new_password" type="password" autocomplete="new-password" required maxlength="128" /></label>
+            <label class="field"><span>Repetir la nueva</span><input class="text-input" name="confirmation" type="password" autocomplete="new-password" required maxlength="128" /></label>
+          </div>
+          <p id="password-message" class="form-error" role="status" hidden></p>
+          <p id="account-recovery-message" class="account-card-note" role="status"></p>
+          <div class="account-card-actions">
+            <button class="link-button" type="submit" form="account-recovery-form">¿No recuerdas la actual?</button>
+            <button class="primary-button" type="submit">Cambiar contraseña</button>
+          </div>
+        </form>
+        <form id="account-recovery-form" hidden></form>
+      </section>
 
-    <section class="surface security-card" id="mfa-card" data-enabled={String(!!user.mfa_enabled)}>
-      <span class="card-icon"><Icon name="key" size={24} /></span><h2>Verificación en dos pasos</h2>
-      <p id="mfa-status">{user.mfa_enabled ? "Activa: al iniciar sesión se pide un código de tu app de autenticación." : "Inactiva. Actívala para pedir un código de tu app de autenticación además de la contraseña."}</p>
-      <span id="mfa-badge" class:list={["badge", user.mfa_enabled ? "badge-moss" : "badge-muted"]}>{user.mfa_enabled ? "Activa" : "Inactiva"}</span>
-      <form id="mfa-setup-form" class="sheet-form account-form" hidden={!!user.mfa_enabled}>
-        <label class="field"><span>Confirma tu contraseña</span><input class="text-input" name="password" type="password" autocomplete="current-password" required maxlength="128" /></label>
-        <div class="security-actions"><button class="ghost-button" type="submit">Configurar</button></div>
-      </form>
-      <form id="mfa-enable-form" class="sheet-form account-form" hidden>
-        <ol class="mfa-steps"><li>Escanea el código con Google Authenticator, Authy, Microsoft Authenticator o 1Password.</li><li>Escribe el código de 6 dígitos que aparece en la app.</li></ol>
-        <img id="mfa-qr" class="mfa-qr" alt="Código QR para la app de autenticación" width="180" height="180" />
-        <p class="surface-note">¿No puedes escanear? Escribe esta clave en la app: <code id="mfa-secret" class="mfa-secret"></code></p>
-        <label class="field"><span>Código de la app</span><input class="text-input" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}" maxlength="8" required /></label>
-        <div class="security-actions"><button class="ghost-button" type="submit">Activar</button><button class="link-button" type="button" id="mfa-enable-cancel">Cancelar</button></div>
-      </form>
-      <form id="mfa-disable-form" class="sheet-form account-form" hidden={!user.mfa_enabled}>
-        <div class="form-grid">
-          <label class="field"><span>Contraseña</span><input class="text-input" name="password" type="password" autocomplete="current-password" required maxlength="128" /></label>
-          <label class="field"><span>Código de la app</span><input class="text-input" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}" maxlength="8" required /></label>
+      <section class="surface account-card" id="mfa-card" data-enabled={String(!!user.mfa_enabled)} aria-labelledby="mfa-title">
+        <header class="account-card-head"><Icon name="key" size={16} /><h2 id="mfa-title">Verificación en dos pasos</h2><span id="mfa-badge" class:list={["badge", user.mfa_enabled ? "badge-moss" : "badge-muted"]}>{user.mfa_enabled ? "Activa" : "Inactiva"}</span></header>
+        <div class="account-card-body">
+          <p id="mfa-status" class="account-card-lead">{user.mfa_enabled ? "Al iniciar sesión se pide un código de tu app de autenticación." : "Actívala para pedir un código de tu app de autenticación además de la contraseña."}</p>
+          <form id="mfa-setup-form" class="account-card-step" hidden={!!user.mfa_enabled}>
+            <div class="account-fields">
+              <label class="field field-wide"><span>Confirma tu contraseña</span><input class="text-input" name="password" type="password" autocomplete="current-password" required maxlength="128" /></label>
+            </div>
+            <div class="account-card-actions"><button class="primary-button" type="submit">Configurar</button></div>
+          </form>
+          <form id="mfa-enable-form" class="account-card-step mfa-enable" hidden>
+            <img id="mfa-qr" class="mfa-qr" alt="Código QR para la app de autenticación" width="132" height="132" />
+            <div class="mfa-enable-copy">
+              <ol class="mfa-steps"><li>Escanéalo con Google Authenticator, Authy, Microsoft Authenticator o 1Password.</li><li>Escribe el código de 6 dígitos de la app.</li></ol>
+              <p class="account-card-note">¿No puedes escanear? Clave: <code id="mfa-secret" class="mfa-secret"></code></p>
+              <label class="field"><span>Código de la app</span><input class="text-input" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}" maxlength="8" required /></label>
+            </div>
+            <div class="account-card-actions"><button class="link-button" type="button" id="mfa-enable-cancel">Cancelar</button><button class="primary-button" type="submit">Activar</button></div>
+          </form>
+          <form id="mfa-disable-form" class="account-card-step" hidden={!user.mfa_enabled}>
+            <div class="account-fields">
+              <label class="field"><span>Contraseña</span><input class="text-input" name="password" type="password" autocomplete="current-password" required maxlength="128" /></label>
+              <label class="field"><span>Código de la app</span><input class="text-input" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}" maxlength="8" required /></label>
+            </div>
+            <div class="account-card-actions"><button class="ghost-button danger-action" type="submit">Desactivar</button></div>
+          </form>
+          <p id="mfa-message" class="form-error" role="status" hidden></p>
         </div>
-        <div class="security-actions"><button class="ghost-button danger-action" type="submit">Desactivar</button></div>
-      </form>
-      <p id="mfa-message" class="form-error" role="status" hidden></p>
-    </section>
+      </section>
+    </div>
 
-    <section class="surface security-card security-card--wide">
-      <span class="card-icon"><Icon name="monitor" size={24} /></span><h2>Sesiones abiertas</h2>
-      <p>Dispositivos con acceso a tu cuenta. Cierra los que no reconozcas.</p>
+    <section class="surface account-card account-sessions" aria-labelledby="sessions-title">
+      <header class="account-card-head"><Icon name="monitor" size={16} /><h2 id="sessions-title">Sesiones abiertas</h2>
+        <div class="account-card-tools"><button id="security-logout" class="ghost-button" type="button">Cerrar esta sesión</button><button id="security-logout-all" class="ghost-button danger-action" type="button">Cerrar todas</button></div>
+      </header>
       <ul id="session-list" class="session-list" aria-live="polite"><li class="inline-message">Cargando sesiones…</li></ul>
       <p id="session-message" class="form-error" role="status" hidden></p>
-      <div class="security-actions"><button id="security-logout" class="ghost-button" type="button">Cerrar esta sesión</button><button id="security-logout-all" class="ghost-button danger-action" type="button">Cerrar todas las sesiones</button></div>
     </section>
-  </div>
+  </>
 )}
+</div>

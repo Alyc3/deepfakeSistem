@@ -2,6 +2,9 @@ import { fullName, type AccountSession } from "@domain/identity";
 import { lab } from "../lab";
 import { showToast } from "../toast";
 import { describeError } from "../errors";
+import { liveValidation, restrictField, restrictForm, validateForm } from "../validation";
+import { busy, setBusy } from "../loading";
+import { PROFILE_SCHEMA, RULES } from "@domain/validation";
 
 const node = <T extends HTMLElement>(id: string) => document.getElementById(id) as T | null;
 const input = (form: HTMLFormElement, name: string) => form.elements.namedItem(name) as HTMLInputElement;
@@ -15,13 +18,13 @@ function say(id: string, text: string, ok = false): void {
 function onSubmit(form: HTMLFormElement | null, messageId: string, run: (form: HTMLFormElement) => Promise<string | void>): void {
   form?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const button = form.querySelector<HTMLButtonElement>('[type="submit"]');
-    if (button) button.disabled = true;
+    const button = form.querySelector<HTMLButtonElement>('button[type="submit"]:not([form])');
+    if (button) { button.disabled = true; setBusy(button, true); }
     say(messageId, "");
     try { const text = await run(form); if (text) say(messageId, text, true); }
     catch (error) { say(messageId, describeError(error, "No se pudo completar la operación.")); }
     finally {
-      if (button) button.disabled = false;
+      if (button) { button.disabled = false; setBusy(button, false); }
       form.querySelectorAll<HTMLInputElement>('input[type="password"]').forEach((field) => field.value = "");
     }
   });
@@ -35,11 +38,34 @@ function device(agent?: string | null): string {
 }
 
 function wireProfile(): void {
-  onSubmit(node<HTMLFormElement>("profile-form"), "profile-message", async (form) => {
-    const value = (name: string) => input(form, name).value.trim() || null;
-    const user = await lab().identity.updateProfile({ first_name: value("first_name"), last_name: value("last_name"), phone_number: value("phone_number") });
-    const title = node("profile-name"); if (title) title.textContent = fullName(user);
-    return "Datos actualizados.";
+  const form = node<HTMLFormElement>("profile-form");
+  if (!form) return;
+  const button = form.querySelector<HTMLButtonElement>('[type="submit"]')!;
+  const names = ["first_name", "last_name", "phone_number"] as const;
+  const snapshot = () => names.map((name) => input(form, name).value.trim()).join("\u0000");
+  let saved = snapshot();
+  // «Guardar» solo se habilita cuando hay algo que guardar.
+  const sync = () => { button.disabled = snapshot() === saved; };
+  restrictForm(form, PROFILE_SCHEMA);
+  const live = liveValidation(form, PROFILE_SCHEMA);
+  form.addEventListener("input", () => { say("profile-message", ""); sync(); });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!live.validate()) return;
+    say("profile-message", "");
+    try {
+      const value = (name: string) => input(form, name).value.trim() || null;
+      const user = await busy(button, () => lab().identity.updateProfile({ first_name: value("first_name"), last_name: value("last_name"), phone_number: value("phone_number") }), "Guardando…");
+      for (const name of names) input(form, name).value = user[name] ?? "";
+      saved = snapshot();
+      // El nombre aparece en la tarjeta y en la cabecera: se actualizan sin recargar.
+      const name = fullName(user);
+      const initials = name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+      for (const id of ["profile-name", "analyst-name"]) { const target = node(id); if (target) target.textContent = name; }
+      for (const target of [node("profile-initials"), document.querySelector<HTMLElement>(".header-profile .avatar-small")]) if (target) target.textContent = initials;
+      say("profile-message", "Datos actualizados.", true);
+    } catch (error) { say("profile-message", describeError(error, "No se pudieron guardar los cambios.")); }
+    finally { sync(); }
   });
 }
 
@@ -49,7 +75,7 @@ async function renderSessions(): Promise<void> {
     const sessions = await lab().identity.listSessions();
     list.replaceChildren(...sessions.sort((a, b) => Number(b.current) - Number(a.current) || b.last_used_at.localeCompare(a.last_used_at)).map(sessionItem));
     if (!sessions.length) list.replaceChildren(Object.assign(document.createElement("li"), { className: "inline-message", textContent: "No hay sesiones abiertas." }));
-  } catch (error) { say("session-message", describeError(error, "No se pudieron cargar las sesiones.")); }
+  } catch (error) { list.replaceChildren(); say("session-message", describeError(error, "No se pudieron cargar las sesiones.")); }
 }
 function sessionItem(session: AccountSession): HTMLLIElement {
   const item = document.createElement("li"); item.className = "session-item";
@@ -75,11 +101,18 @@ function sessionItem(session: AccountSession): HTMLLIElement {
 
 function setMfaState(enabled: boolean): void {
   const status = node("mfa-status"), badge = node("mfa-badge");
-  if (status) status.textContent = enabled ? "Activa: al iniciar sesión se pide un código de tu app de autenticación." : "Inactiva. Actívala para pedir un código de tu app de autenticación además de la contraseña.";
+  if (status) status.textContent = enabled ? "Al iniciar sesión se pide un código de tu app de autenticación." : "Actívala para pedir un código de tu app de autenticación además de la contraseña.";
   if (badge) { badge.textContent = enabled ? "Activa" : "Inactiva"; badge.className = `badge ${enabled ? "badge-moss" : "badge-muted"}`; }
   node("mfa-setup-form")!.hidden = enabled; node("mfa-enable-form")!.hidden = true; node("mfa-disable-form")!.hidden = !enabled;
 }
+/** Los códigos de la app de autenticación: solo números. */
+function wireCode(form: HTMLFormElement | null): void {
+  const code = form?.elements.namedItem("code");
+  if (code instanceof HTMLInputElement) restrictField(code, RULES.otpCode);
+}
+const codeOk = (form: HTMLFormElement) => validateForm(form, { code: RULES.otpCode }, { required: ["code"] });
 function wireSecurity(): void {
+  wireCode(node<HTMLFormElement>("mfa-enable-form")); wireCode(node<HTMLFormElement>("mfa-disable-form"));
   onSubmit(node<HTMLFormElement>("password-form"), "password-message", async (form) => {
     if (input(form, "new_password").value !== input(form, "confirmation").value) throw new Error("Las contraseñas nuevas no coinciden.");
     const text = await lab().identity.changePassword(input(form, "current_password").value, input(form, "new_password").value);
@@ -94,6 +127,7 @@ function wireSecurity(): void {
     input(node<HTMLFormElement>("mfa-enable-form")!, "code").focus();
   });
   onSubmit(node<HTMLFormElement>("mfa-enable-form"), "mfa-message", async (form) => {
+    if (!codeOk(form)) return;
     const text = await lab().identity.enableMfa(input(form, "code").value.replace(/\s+/g, ""));
     form.reset(); node<HTMLImageElement>("mfa-qr")!.removeAttribute("src"); node("mfa-secret")!.textContent = "";
     setMfaState(true);
@@ -104,6 +138,7 @@ function wireSecurity(): void {
     setMfaState(false); say("mfa-message", "");
   });
   onSubmit(node<HTMLFormElement>("mfa-disable-form"), "mfa-message", async (form) => {
+    if (!codeOk(form)) return;
     const text = await lab().identity.disableMfa(input(form, "password").value, input(form, "code").value.replace(/\s+/g, ""));
     form.reset(); setMfaState(false);
     return text;
@@ -116,7 +151,14 @@ function wireSecurity(): void {
   void renderSessions();
 }
 
+/** Fechas en la zona horaria del navegador (el servidor las pinta en UTC). */
+function localizeDates(): void {
+  const day = new Intl.DateTimeFormat("es", { dateStyle: "medium", timeStyle: "short" });
+  document.querySelectorAll<HTMLTimeElement>("time[data-local-time]").forEach((time) => { time.textContent = day.format(new Date(time.dateTime)); });
+}
+
 export function wireAccount(section: string): void {
+  localizeDates();
   if (section === "perfil") wireProfile();
   if (section === "seguridad") wireSecurity();
 }

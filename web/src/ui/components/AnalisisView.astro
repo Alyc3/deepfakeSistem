@@ -19,8 +19,7 @@
       <p id="evidence-hash-state" class="workflow-status" role="status">Selecciona una evidencia para calcular su huella SHA-256.</p>
       <label class="field"><span>Hash SHA-256 original de referencia</span><input id="reference-hash" class="text-input" spellcheck="false" autocomplete="off" placeholder="Pega los 64 caracteres hexadecimales" /></label>
       <div class="workflow-actions"><button id="create-evidence-copy" class="primary-button" type="button" disabled>Guardar original y crear copia</button><button id="analyze-case-evidence" class="primary-button" type="button" disabled>Analizar copia</button></div>
-      <div id="case-analysis-output" class="analysis-review" hidden><h3>Resultado del análisis</h3><pre id="case-analysis-result"></pre><label class="field"><span>Observaciones y conclusiones del perito (obligatorias)</span><textarea id="expert-observations" class="text-input" rows="5" maxlength="20000" placeholder="Describe la revisión de los indicios y del mapa de calor."></textarea></label><button id="finalize-case-report" class="primary-button" type="button" disabled>Guardar revisión y generar PDF</button><div id="case-report-download"></div></div>
-      <div id="case-audit-log" class="case-audit-log"></div>
+      <div id="case-original-download" class="case-original-download"></div>
     </div>
   </section>
 
@@ -29,16 +28,27 @@
       <div><p class="eyebrow">ANÁLISIS EN CURSO · <span id="analysis-case-number"></span></p><h2 id="analysis-case-title">Procesamiento de la copia</h2></div>
       <button id="analysis-back" class="ghost-button" type="button">Volver al expediente</button>
     </header>
-    <div class="analysis-status-card surface">
-      <div class="analysis-status-copy"><span id="analysis-phase-label" class="metric-label">TRABAJO EN COLA</span><h2 id="analysis-status-title">Preparando análisis…</h2><p id="analysis-status-detail">La copia preservada se analizará en el worker de inferencia.</p></div>
+    <div id="analysis-status-card" class="analysis-status-card surface">
+      <div class="analysis-status-copy"><span class="analysis-status-labels"><span id="analysis-phase-label" class="metric-label">TRABAJO EN COLA</span><span id="analysis-verdict-badge" class="verdict-badge" hidden></span></span><h2 id="analysis-status-title">Preparando análisis…</h2><p id="analysis-status-detail">La copia preservada se analizará en el motor forense.</p></div>
       <div id="analysis-progress" class="analysis-progress is-indeterminate" role="progressbar" aria-label="Progreso del análisis" aria-valuemin="0" aria-valuemax="100"><span id="analysis-progress-fill"></span></div>
-      <p id="analysis-progress-caption" class="analysis-progress-caption">Esperando al worker…</p>
+      <p id="analysis-progress-caption" class="analysis-progress-caption">Esperando al motor…</p>
     </div>
     <div class="analysis-screen-grid">
-      <section class="surface analysis-log-panel"><div class="surface-heading"><h2>Actividad del análisis</h2><span id="analysis-job-label" class="metric-label"></span></div><ol id="analysis-live-log" class="analysis-live-log"><li class="analysis-log-entry is-current">Enviando la tarea al worker…</li></ol></section>
-      <section id="analysis-verdict" class="surface analysis-verdict" hidden>
-        <div class="surface-heading"><h2>Dictamen del sistema</h2></div>
-        <div class="analysis-verdict-body"><span id="analysis-verdict-badge" class="verdict-badge"></span><p id="analysis-verdict-copy"></p><dl id="analysis-verdict-metrics" class="analysis-verdict-metrics"></dl><div id="analysis-heatmaps" class="summary-heatmaps analysis-heatmaps" hidden></div><p id="analysis-result-note" class="case-summary-meta"></p><button id="analysis-review-button" class="primary-button" type="button">Continuar con la revisión pericial</button></div>
+      <div class="analysis-side">
+        <section class="surface analysis-log-panel"><div class="surface-heading"><h2>Actividad del análisis</h2><span id="analysis-job-label" class="metric-label"></span></div><ol id="analysis-live-log" class="analysis-live-log" aria-live="polite"></ol></section>
+        <section id="analysis-review" class="surface analysis-review-panel" aria-labelledby="analysis-review-title" hidden>
+          <div class="surface-heading"><h2 id="analysis-review-title">Revisión pericial</h2></div>
+          <div class="analysis-review-body">
+            <label class="field"><span>Observaciones y conclusión del perito</span><textarea id="expert-observations" class="text-input" rows="6" maxlength="20000" placeholder="Valora los indicios, el mapa de calor y la secuencia de fotogramas del informe."></textarea></label>
+            <p id="analysis-review-message" class="form-error" role="status" hidden></p>
+            <div class="analysis-review-actions"><span class="analysis-review-hint">Al guardar se emite la versión final del informe con tu conclusión.</span><button id="finalize-case-report" class="primary-button" type="button" disabled>Guardar revisión</button></div>
+          </div>
+        </section>
+      </div>
+      <section id="analysis-report" class="surface analysis-report" aria-labelledby="analysis-report-title" hidden>
+        <div class="surface-heading"><h2 id="analysis-report-title">Informe pericial</h2><span id="analysis-report-state" class="badge badge-muted">Borrador</span>
+          <span class="analysis-report-tools"><a id="analysis-report-open" class="ghost-button" target="_blank" rel="noopener">Abrir</a><a id="analysis-report-download" class="ghost-button" download>Descargar</a></span></div>
+        <div class="analysis-report-frame"><iframe id="analysis-report-viewer" title="Informe pericial en PDF"></iframe><p id="analysis-report-loading" class="analysis-report-loading" role="status">Cargando informe…</p></div>
       </section>
     </div>
   </section>

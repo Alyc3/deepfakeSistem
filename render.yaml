@@ -19,8 +19,6 @@ services:
         value: https://authentication-service.fastapicloud.dev
       - key: AUTH_INTERNAL_API_KEY
         sync: false
-      - key: CERTIFACE_API_URL
-        sync: false
       - key: FORENSICS_API_OVERRIDE
         value: "true"
       - key: FORENSICS_API_OVERRIDE_HOSTS

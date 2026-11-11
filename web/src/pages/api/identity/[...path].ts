@@ -1,11 +1,12 @@
 import type { APIContext, APIRoute } from "astro";
 import QRCode from "qrcode";
 import { homeFor, permissionsFor, type Permission } from "@domain/access";
-import type { IdentityUser } from "@domain/identity";
+import { NEW_USER_STATUSES, type IdentityUser } from "@domain/identity";
 import { identityRequest, identityResponse, ServiceError, verifiedProfile } from "@infrastructure/server/identity-service";
 import { accessToken, clearSession, establishSession, isMfaChallenge, isTokenPair, storeMfaChallenge, type TokenPair } from "@infrastructure/server/auth-session";
 import { serverConfig } from "@infrastructure/server/config";
 import { jsonBody, serviceFailure } from "@infrastructure/server/request";
+import { PROFILE_SCHEMA, ROLE_SCHEMA, RULES, SUSPENSION_SCHEMA, USER_SCHEMA, checkValue, validateFields, type Rule, type Schema } from "@domain/validation";
 
 type Body = Record<string, unknown>;
 type Access = "public" | "session" | Permission;
@@ -45,6 +46,18 @@ function fields(body: Body, allowed: string[], required: string[] = [], { nullab
   if (required.some((key) => typeof result[key] !== "string" || !(result[key] as string).length)) throw new ServiceError(400, "Completa los campos obligatorios.");
   return result;
 }
+/** Normaliza y valida el formato de cada campo; si algo falla, responde 400 con todos los motivos. */
+function checked(data: Body, schema: Schema, required: string[] = []): Body {
+  const { values, errors } = validateFields(data, schema, required);
+  if (errors.length) throw new ServiceError(400, "Revisa los datos del formulario.", undefined, errors);
+  return values;
+}
+/** Un único valor obligatorio con su regla. */
+function one(value: unknown, rule: Rule): string {
+  const result = checkValue(rule, value, true);
+  if (result.error) throw new ServiceError(400, result.error);
+  return result.value!;
+}
 const call = (context: APIContext, path: string, method = "GET", body?: unknown) =>
   identityRequest(path, { method, body, token: context.locals.accessToken, client: context.locals.client });
 const message = (data: unknown, fallback: string) => {
@@ -71,10 +84,10 @@ async function openSession(context: APIContext, pair: TokenPair): Promise<Respon
 const routes: Route[] = [
   // ---------- Acceso público ----------
   route("POST", "auth/login", "public", async (context, _match, body) => {
-    if (typeof body.email !== "string" || typeof body.password !== "string" || body.email.length > 254 || body.password.length > 1024) {
+    if (typeof body.email !== "string" || typeof body.password !== "string" || !body.password || body.password.length > 1024) {
       throw new ServiceError(400, "Revisa el correo y la contraseña.");
     }
-    const email = body.email.trim().toLowerCase();
+    const email = one(body.email, RULES.email);
     const accountKey = `login:${ipKey(context)}:${email}`;
     guard(accountKey, 10); guard(`login:${ipKey(context)}`, 50);
     hit(`login:${ipKey(context)}`);
@@ -88,7 +101,7 @@ const routes: Route[] = [
     return openSession(context, result);
   }, true),
   route("POST", "auth/mfa/verify", "public", async (context, _match, body) => {
-    const { code } = fields(body, ["code"], ["code"]);
+    const code = one(fields(body, ["code"], ["code"]).code, RULES.otpCode);
     const key = `mfa:${ipKey(context)}`;
     guard(key, 10);
     const mfaToken = await context.session?.get("mfaToken");
@@ -104,14 +117,15 @@ const routes: Route[] = [
     return openSession(context, result);
   }, true),
   route("POST", "auth/password-recovery", "public", async (context, _match, body) => {
-    const data = fields(body, ["email"], ["email"]);
+    const data = { email: one(fields(body, ["email"], ["email"]).email, RULES.email) };
     const key = `recovery:${ipKey(context)}`;
     guard(key, 5); hit(key);
     await identityRequest("/api/auth/password-recovery", { method: "POST", body: data, client: context.locals.client });
     return json({ message: "Si la cuenta existe, recibirás un enlace de recuperación." });
   }, true),
   route("POST", "auth/reset-password", "public", async (context, _match, body) => {
-    const data = fields(body, ["token", "new_password"], ["token", "new_password"]);
+    const raw = fields(body, ["token", "new_password"], ["token", "new_password"]);
+    const data = { token: one(raw.token, RULES.resetToken), new_password: one(raw.new_password, RULES.password) };
     const key = `reset:${ipKey(context)}`;
     guard(key, 10); hit(key);
     await identityRequest("/api/auth/reset-password", { method: "POST", body: data, client: context.locals.client });
@@ -131,7 +145,7 @@ const routes: Route[] = [
   route("GET", "auth/me", "session", async (context) =>
     json({ user: context.locals.user, permissions: context.locals.permissions, home: homeFor(context.locals.permissions) })),
   route("PATCH", "auth/me", "session", async (context, _match, body) =>
-    json(await call(context, "/api/auth/me", "PATCH", fields(body, ["first_name", "last_name", "phone_number"], [], { nullable: true }))), true),
+    json(await call(context, "/api/auth/me", "PATCH", checked(fields(body, ["first_name", "last_name", "phone_number"], [], { nullable: true }), PROFILE_SCHEMA))), true),
   route("POST", "auth/change-password", "session", async (context, _match, body) => {
     const data = fields(body, ["current_password", "new_password"], ["current_password", "new_password"]);
     return message(await call(context, "/api/auth/change-password", "POST", data), "Contraseña actualizada.");
@@ -155,9 +169,9 @@ const routes: Route[] = [
     return json({ secret: setup.secret, otpauth_uri: setup.otpauth_uri, qr_svg: `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}` });
   }, true),
   route("POST", "auth/mfa/enable", "session", async (context, _match, body) =>
-    message(await call(context, "/api/auth/mfa/enable", "POST", fields(body, ["code"], ["code"])), "Verificación en dos pasos activada."), true),
+    message(await call(context, "/api/auth/mfa/enable", "POST", { code: one(fields(body, ["code"], ["code"]).code, RULES.otpCode) }), "Verificación en dos pasos activada."), true),
   route("POST", "auth/mfa/disable", "session", async (context, _match, body) =>
-    message(await call(context, "/api/auth/mfa/disable", "POST", fields(body, ["password", "code"], ["password", "code"])), "Verificación en dos pasos desactivada."), true),
+    message(await call(context, "/api/auth/mfa/disable", "POST", checked(fields(body, ["password", "code"], ["password", "code"]), { password: RULES.password, code: RULES.otpCode }, ["password", "code"])), "Verificación en dos pasos desactivada."), true),
 
   // ---------- Usuarios ----------
   route("GET", "users", "users", async (context) => {
@@ -173,11 +187,16 @@ const routes: Route[] = [
     return json(users, 200, { "X-Total-Count": String(users.length) });
   }),
   route("POST", "users", "users", async (context, _match, body) => {
-    const data = fields(body, ["email", "password", "role_name", "first_name", "last_name", "identifier", "phone_number", "status"], ["email", "role_name"]);
+    const data = checked(fields(body, ["email", "password", "role_name", "first_name", "last_name", "identifier", "phone_number", "status"], ["email", "role_name"]), USER_SCHEMA, ["email", "role_name"]);
+    if (data.status !== undefined && !(NEW_USER_STATUSES as readonly unknown[]).includes(data.status)) {
+      throw new ServiceError(400, "Estado: una cuenta nueva solo puede crearse activa o pendiente.");
+    }
     return json(await call(context, "/api/auth/register", "POST", data), 201);
   }, true),
   route("PATCH", "users/:id", "users", async (context, match, body) => {
-    const data = fields(body, ["email", "password", "role_name", "first_name", "last_name", "identifier", "phone_number", "status"], [], { nullable: true });
+    const data = checked(fields(body, ["email", "password", "role_name", "first_name", "last_name", "identifier", "phone_number", "status"], [], { nullable: true }), USER_SCHEMA);
+    // El correo, el rol y el estado se pueden cambiar, pero no vaciar.
+    for (const key of ["email", "role_name", "status"]) if (key in data && data[key] === null) throw new ServiceError(400, `${USER_SCHEMA[key].label}: es obligatorio.`);
     return json(await call(context, `/api/users/${at(match[1])}`, "PATCH", data));
   }, true),
   route("DELETE", "users/:id", "users", async (context, match) => {
@@ -185,7 +204,10 @@ const routes: Route[] = [
     return noContent();
   }),
   route("PATCH", "users/:id/suspend", "users", async (context, match, body) => {
-    const data = fields(body, ["suspended_from", "suspended_until"], [], { nullable: true });
+    const data = checked(fields(body, ["suspended_from", "suspended_until"], [], { nullable: true }), SUSPENSION_SCHEMA);
+    if ((data.suspended_from === null) !== (data.suspended_until === null) || (data.suspended_from && Date.parse(data.suspended_until as string) <= Date.parse(data.suspended_from as string))) {
+      throw new ServiceError(400, "La fecha final de la suspensión debe ser posterior a la inicial.");
+    }
     return json(await call(context, `/api/users/${at(match[1])}/suspend`, "PATCH", { suspended_from: data.suspended_from ?? null, suspended_until: data.suspended_until ?? null }));
   }, true),
   route("POST", "users/:id/unlock", "users", async (context, match) => json(await call(context, `/api/users/${at(match[1])}/unlock`, "POST"))),
@@ -198,9 +220,9 @@ const routes: Route[] = [
   // ---------- Roles ----------
   route("GET", "roles", "roles", async (context) => json(await call(context, "/api/roles/"))),
   route("POST", "roles", "roles", async (context, _match, body) =>
-    json(await call(context, "/api/roles/", "POST", fields(body, ["name", "description"], ["name"])), 201), true),
+    json(await call(context, "/api/roles/", "POST", checked(fields(body, ["name", "description"], ["name"]), ROLE_SCHEMA, ["name"])), 201), true),
   route("PUT", "roles/:id", "roles", async (context, match, body) =>
-    json(await call(context, `/api/roles/${at(match[1])}`, "PUT", fields(body, ["name", "description"], ["name"]))), true),
+    json(await call(context, `/api/roles/${at(match[1])}`, "PUT", checked(fields(body, ["name", "description"], ["name"]), ROLE_SCHEMA, ["name"]))), true),
   route("DELETE", "roles/:id", "roles", async (context, match) => {
     await call(context, `/api/roles/${at(match[1])}`, "DELETE");
     return noContent();
