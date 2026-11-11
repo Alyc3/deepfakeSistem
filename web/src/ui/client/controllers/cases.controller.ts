@@ -77,6 +77,7 @@ export function wireCases() {
     const stages: Record<string, [string, string]> = {
       queued: ["EN COLA", "Esperando al motor de análisis…"], verification: ["VERIFICACIÓN FORENSE", "Comprobando la copia preservada…"],
       extracting: ["PREPARACIÓN DEL VIDEO", "Extrayendo fotogramas para el análisis…"], inference: ["MODELOS EN EJECUCIÓN", "Analizando la evidencia…"],
+      scene: ["SONDA DE ESCENA", "Examinando el encuadre completo…"],
       heatmaps: ["MAPAS DE CALOR", "Preparando las explicaciones visuales…"], archive: ["ARCHIVO FORENSE", "Sellando y guardando el informe…"],
       completed: ["ANÁLISIS COMPLETADO", "El dictamen está listo para revisión pericial."],
     };
@@ -87,7 +88,7 @@ export function wireCases() {
     if (progress?.current != null && progress.total != null && progress.total > 0) {
       const percent = Math.max(0, Math.min(100, Math.round(progress.current / progress.total * 100)));
       analysisProgress.classList.remove("is-indeterminate"); analysisProgress.setAttribute("aria-valuenow", String(percent)); progressFill.style.width = `${percent}%`;
-      progressCaption.textContent = `Fotograma ${progress.current} de ${progress.total} · ${percent}%`;
+      progressCaption.textContent = `${progress.stage === "scene" ? "Sonda" : "Fotograma"} ${progress.current} de ${progress.total} · ${percent}%`;
     } else if (progress?.stage === "completed" || status === "completed") {
       analysisProgress.classList.remove("is-indeterminate"); analysisProgress.setAttribute("aria-valuenow", "100"); progressFill.style.width = "100%"; progressCaption.textContent = "Proceso completado";
     } else {

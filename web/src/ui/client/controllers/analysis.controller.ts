@@ -7,6 +7,7 @@
 import {
   MODEL_SEQUENCE,
   frameSignalRange,
+  isDecisive,
   type AnalysisResult,
 } from "@domain/analysis";
 import { MODEL_NAMES, pctOf, verdictOf } from "@domain/verdict";
@@ -118,7 +119,7 @@ async function renderAnalysisSteps(result: AnalysisResult): Promise<void> {
 
     const range = frameSignalRange(result);
     if (range) {
-      addLog(`Señal por fotograma: mín ${pctOf(range.min)} · máx ${pctOf(range.max)}`);
+      addLog(`${result.decisive_models ? "Face swap" : "Señal"} por fotograma: mín ${pctOf(range.min)} · máx ${pctOf(range.max)}`);
       await wait(STEP_MS);
     }
   } else {
@@ -135,7 +136,8 @@ async function renderAnalysisSteps(result: AnalysisResult): Promise<void> {
   for (const key of MODEL_SEQUENCE) {
     const signal = models[key];
     if (signal === undefined) continue;
-    addLog(`${MODEL_NAMES[key]}: señal ${pctOf(signal)}`, signal > 0.5 ? "note" : "done");
+    const ruling = isDecisive(result, key);
+    addLog(`${MODEL_NAMES[key]}: señal ${pctOf(signal)}${ruling ? "" : " (orientativo)"}`, ruling && signal > 0.5 ? "note" : "done");
     await wait(STEP_MS);
   }
 

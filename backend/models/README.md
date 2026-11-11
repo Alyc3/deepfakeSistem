@@ -63,21 +63,15 @@ flowchart TD
     A[Video recibido] --> B[Extracción de 24 fotogramas<br/>repartidos, con marca de tiempo]
     B --> C[Detector Facial YuNet<br/>recorta el rostro de cada fotograma]
     C --> D[Cada rostro pasa por los tres peritos]
-    D --> E1[Detector De Síntesis GAN<br/>agregación: mediana]
-    D --> E2[Detector De Face Swap<br/>agregación: segundo máximo]
-    D --> E3[Detector De Difusión Facial<br/>agregación: mediana]
-    E1 --> F{Señal máxima > 0.5}
-    E2 --> F
-    E3 --> F
-    F -- "Sí, con corroboración<br/>(GAN o Face Swap ≥ 0.3)" --> G[MANIPULADO]
-    F -- "Sí, pero solo difusión" --> H[Sonda De Escena Generada<br/>2 encuadres completos]
-    F -- "No supera 0.5:<br/>candidato a REAL" --> H2[Sonda De Escena Generada<br/>verificación sistemática]
-    H -- "Escena > 0.6:<br/>generación global" --> G
-    H -- "Rostro < 0.7 y<br/>escena < 0.3" --> I2[REAL con nota<br/>patrón de filtro]
-    H -- "Rostro ≥ 0.7 o<br/>escena no concluyente" --> J[INDICIOS<br/>filtro o face swap moderno]
-    H2 -- "Escena > 0.75:<br/>generación global" --> G
-    H2 -- "Escena ≥ 0.55 o<br/>señal facial ≥ 0.25" --> J2[INDICIOS<br/>señal débil]
-    H2 -- "Escena limpia y<br/>señal facial baja" --> I[REAL verificado]
+    D --> E2[Detector De Face Swap<br/>nivel sostenido en 3 fotogramas seguidos]
+    D --> E1[Síntesis GAN y Difusión Facial<br/>mediana · orientativas]
+    B --> S[Sonda De Escena Generada<br/>mediana de 4 encuadres]
+    E2 --> F{Regla de dictamen<br/>app/video_rule.py}
+    S --> F
+    E1 -. salvaguarda GAN .-> F
+    F -- "Escena ≥ 0.8 o face swap<br/>sostenido > 0.5" --> G[MANIPULADO]
+    F -- "Escena < 0.5, sin pareja de<br/>disparos y GAN < 0.5" --> I[SIN MANIPULACIÓN]
+    F -- "Resto: escena intermedia,<br/>face swap breve o GAN alta" --> J[INDICIOS<br/>con nota para el perito]
 ```
 
 ### Paso 1 — Ingesta Y Extracción
@@ -119,67 +113,41 @@ familia de manipulación distinta:
 Cada uno emite una probabilidad de manipulación **por fotograma**, visible en
 el log (`p_gan`, `p_swap`, `p_diff`).
 
-### Paso 4 — Agregación Por Familia
+### Paso 4 — Agregación
 
-Cada familia resume sus 24 puntuaciones según la naturaleza de su artefacto:
+| Señal | Estadística | Papel | Razón forense |
+|---|---|---|---|
+| Face Swap | **Nivel sostenido**: el máximo, entre todas las ventanas de 3 fotogramas seguidos con rostro, de la puntuación mínima de la ventana | Decide | Un intercambio de rostro dura todo el plano y dispara el detector en fotogramas consecutivos; sus falsas alarmas en video auténtico (perfiles, rostros pequeños, desenfoque) son picos breves |
+| Sonda De Escena | **Mediana de 4 encuadres** repartidos, preferentemente donde el rostro no domina | Decide | Es la única señal que delata el video generado por completo; con 4 lecturas, una aislada alta pesa menos que con 2 |
+| Síntesis GAN | Mediana sobre los fotogramas con rostro | Orientativa y salvaguarda | No separa en material de redes; con mediana ≥ 0.5 impide certificar autenticidad, pero no condena |
+| Difusión Facial | Mediana sobre los fotogramas con rostro | Orientativa | En material de redes puntúa más alto lo auténtico que lo generado: los filtros y la recompresión imitan su firma |
 
-| Familia | Estadística | Razón forense |
-|---|---|---|
-| Síntesis GAN | **Mediana** | Una cara generada lo es en todos los fotogramas; la mediana resiste picos y valles atípicos |
-| Face Swap | **Segundo Máximo** | Los artefactos del swap son intermitentes (pose, expresión, luz); se exigen **dos detecciones independientes** — un pico único de ruido no condena |
-| Difusión Facial | **Mediana** | Igual que la GAN: la generación afecta a todo el video por igual |
+### Paso 5 — Decisión
 
-### Paso 5 — Decisión Y Resolución De Ambigüedad
+La regla vive en `app/video_rule.py`, sin dependencias de los modelos, y la
+comparten producción, el script de calibración y las pruebas:
 
-La señal más alta de las tres decide. Sobre esa base:
+1. **MANIPULADO** si la escena alcanza 0.8 (generación global) o el face swap
+   se sostiene por encima de 0.5 en 3 fotogramas seguidos. La confianza es la
+   señal que condenó.
+2. **SIN MANIPULACIÓN** si la escena está limpia (< 0.5), el face swap no
+   encadena ni dos disparos y la mediana GAN queda por debajo de 0.5.
+3. **INDICIOS** en el resto, con una nota que explica cada duda: lectura de
+   escena intermedia (0.5–0.8), face swap breve (dos fotogramas seguidos) o
+   síntesis GAN alta sin corroborar.
 
-1. **Condena corroborada** (la señal ganadora supera 0.5 y GAN o Face Swap
-   participan con ≥ 0.3) → **MANIPULADO**, con la confianza de la señal
-   ganadora.
-2. **Condena solo por difusión** (los otros dos limpios) → ambigüedad
-   conocida: los filtros de embellecimiento producen la misma firma facial
-   que la generación. Se invoca la **Sonda De Escena Generada** sobre 2
-   encuadres completos (solo si hay suficientes fotogramas donde el rostro no
-   domina), con cuatro salidas:
-   - firma también en el entorno (> 0.5) → **MANIPULADO** (generación global);
-   - señal facial **moderada** (< 0.7) y entorno **claramente limpio**
-     (< 0.3) → **REAL con nota**: patrón de filtro sobre material auténtico,
-     con la confianza apoyada en la evidencia no contaminada (el entorno);
-   - señal facial **fuerte** (≥ 0.7) o entorno no concluyente → **INDICIOS**:
-     con señal fuerte conviven el filtro extremo y el video generado,
-     indistinguibles sin revisión humana;
-   - sin encuadres contrastables → **INDICIOS** prudente.
+Los umbrales salen de la calibración del 2026-11-11 sobre 71 videos de redes
+sociales (36 auténticos, 35 manipulados entre face swap y generación
+completa), elegidos con validación cruzada dejando uno fuera. Errores graves:
+2 auténticos condenados y 1 manipulado certificado, frente a 25 y 0 con la
+regla anterior (máximo de los tres peritos). Detalle y procedimiento para
+volver a medir: `python -m scripts.calibrate_catalog` (ver el README raíz).
 
-   Las barreras (0.7 y 0.3) están calibradas con casos reales de ambas
-   clases: el real filtrado observado da señal facial 0.55 con entorno 0.29,
-   mientras que los generados y el filtro extremo dan ≥ 0.88.
-3. **Verificación sistemática de todo candidato a REAL** → antes de
-   certificar, la Sonda De Escena Generada examina 2 encuadres completos.
-   Motivo, verificado empíricamente: un generador reciente dejó el rostro
-   casi limpio (mediana facial 0.13, por debajo del real más alto observado,
-   0.19) — la única evidencia posible estaba en el encuadre. Salidas:
-   - escena > 0.75 → **MANIPULADO** (generación global; el listón alto es
-     deliberado — aquí la sonda condena en solitario, y su ruido sobre
-     material auténtico llega casi a 0.5: lecturas reales observadas 0.25,
-     0.29, 0.47 y 0.48);
-   - escena ≥ 0.55, o señal facial en zona gris (0.25–0.5, donde generadores
-     recientes han puntuado 0.27 y 0.34) → **INDICIOS** y peritaje manual;
-   - escena limpia y señal facial baja → **REAL verificado**, con la lectura
-     de escena registrada como evidencia positiva (`scene_generated`).
-   En la ruta de reserva (donde la sonda solo *confirma* una condena facial
-   ya existente) el listón de confirmación es 0.6. Los tres umbrales quedan
-   pendientes de contraste con lecturas de escena sobre video generado, aún
-   inexistentes.
-   En primeros planos la sonda examina el fotograma tal cual: no puede
-   distinguir el entorno, pero aporta la opinión de un modelo independiente
-   entrenado en otra distribución — verificado con un fake en primer plano
-   que pasó con los tres detectores faciales en silencio y solo el encuadre
-   podía delatarlo. (La ruta de reserva, con señal facial alta, sí omite la
-   sonda en primeros planos: ahí rostro≈encuadre no separa filtro de
-   generación y decide el perito.)
-
-La sonda solo se paga en los casos 2 y 3 (~1 minuto extra); los veredictos
-claros no la ejecutan.
+La sonda se ejecuta siempre en video (4 × ~20-27 s en CPU). Las **imágenes**
+conservan la cascada anterior (condena corroborada, contraprueba de escena
+cuando solo condena la difusión y verificación de todo «Real»), descrita en
+`predict_image` de `app/model.py`: el catálogo de calibración no incluía
+imágenes.
 
 ### Paso 6 — Dictamen
 
@@ -187,7 +155,7 @@ claros no la ejecutan.
 |---|---|---|
 | **MANIPULADO** (naranja) | `Fake` | Manipulación detectada, con corroboración o generación global confirmada |
 | **INDICIOS** (ámbar, borde discontinuo) | `Suspect` | Señal sin corroborar o inconclusa; el campo `caveat` explica la reserva y el perito decide con las métricas |
-| **REAL** (moss) | `Real` | Los tres peritos limpios; el porcentaje orienta la decisión del perito |
+| **REAL** (moss) | `Real` | En video: escena limpia y sin face swap sostenido ni breve (GAN y difusión son orientativas). En imagen: los tres peritos limpios. El porcentaje orienta la decisión del perito |
 
 El dictamen incluye siempre el desglose por modelo (la señal decisoria
 marcada con ▸), los fotogramas analizados y con rostro, la puntuación por
