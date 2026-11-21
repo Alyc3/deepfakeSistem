@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Prepara la VM de Oracle Cloud y levanta CertiFace con HTTPS.
+# Preparación inicial de la VM de Oracle Cloud (una sola vez): instala Docker,
+# abre 80/443, fija el dominio HTTPS y hace el primer despliegue.
+# Los siguientes despliegues los hace GitHub Actions con deploy.sh.
 #
 # Uso, en la VM y dentro de la carpeta del backend:
 #   bash deploy/oracle/setup.sh                 # dominio gratuito <ip>.sslip.io
 #   DOMAIN=api.midominio.com bash deploy/oracle/setup.sh   # dominio propio
 #
-# Es idempotente: volver a ejecutarlo actualiza la imagen con el código copiado.
+# Es idempotente: se puede volver a ejecutar sin efectos secundarios.
 set -euo pipefail
 cd "$(dirname "$0")/../.."          # → backend/
 
@@ -68,19 +70,7 @@ sudo chown -R 1000:1000 .secrets
 sudo chmod 700 .secrets
 sudo chmod 600 .secrets/manifest-signing.pem
 
-# --- 5. Construir y arrancar -----------------------------------------------------
+# --- 5. Primer despliegue ------------------------------------------------------
 say "Construyendo la imagen (la primera vez descarga ~2.6 GB de modelos: 15-30 min)"
-sudo docker compose -f deploy/oracle/docker-compose.yml up -d --build
-
-say "Esperando a que la API cargue los modelos (1-3 min)"
-for _ in $(seq 1 60); do
-  if sudo docker compose -f deploy/oracle/docker-compose.yml exec -T api \
-       python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=5)" >/dev/null 2>&1; then
-    say "Listo. API pública: https://${DOMAIN}"
-    echo "    Comprueba:  curl https://${DOMAIN}/health/live"
-    echo "    Logs:       sudo docker compose -f deploy/oracle/docker-compose.yml logs -f api"
-    exit 0
-  fi
-  sleep 5
-done
-fail "La API no respondió en 5 min. Revisa: sudo docker compose -f deploy/oracle/docker-compose.yml logs api"
+bash deploy/oracle/deploy.sh
+say "API pública: https://${DOMAIN}"

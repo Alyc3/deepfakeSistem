@@ -136,15 +136,11 @@ los expedientes siguen requiriendo conectividad TCP/TLS en el puerto 5432.
 
 - `/health/live`: proceso y modelos cargados, sin depender de PostgreSQL.
 - `/health/ready` y `/`: comprueban PostgreSQL; devuelven 503 si no está disponible.
-- `/docs`: documentación interactiva.
+- `/docs`: documentación de la API (ReDoc) con cada endpoint, sus parámetros, respuestas y errores.
 
-Durante la configuración se verificó la credencial por HTTPS y se crearon las
-las tablas periciales, incluida `analysis_jobs`. La negociación PostgreSQL/TCP agotó el tiempo de espera
-en este equipo. Revisar la ruta de red, firewall y disponibilidad del endpoint;
-no desactivar SSL ni channel binding como solución.
-
-La clave de BD antigua que estuvo versionada debe revocarse en el proveedor.
-La nueva solo se guardó en `backend/.env`.
+Si la conexión PostgreSQL/TCP agota el tiempo de espera, revisa la ruta de red,
+el firewall y la disponibilidad del endpoint; no desactives SSL ni channel
+binding como solución.
 
 ## Auditoría y contrato externo
 

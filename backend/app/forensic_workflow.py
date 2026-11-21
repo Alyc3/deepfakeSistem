@@ -9,7 +9,6 @@ import time
 import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
-from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
 
@@ -18,7 +17,6 @@ from app.report_pdf import build_forensic_pdf
 from app.models_db import AnalysisReport, Evidence, ForensicCase, StoredArtifact, TimecodeInconsistency
 from app.storage.config import BACKEND, StorageConfig
 from app.storage.ports import Artifact, IntegrityError, StorageError
-from app.storage.sealing import sha256
 
 _inference_lock = threading.Lock()
 ALLOWED_MIMES = {"image/jpeg", "image/png", "image/webp", "image/bmp", "image/gif", "video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska", "video/webm"}

@@ -1,9 +1,9 @@
-# CertiFace backend — imagen única para Hugging Face Spaces (CPU) o cualquier VM.
+# CertiFace backend — imagen única (CPU, amd64 o arm64).
 #
 # Un solo contenedor ejecuta Redis (broker local), el worker Celery y la API
 # FastAPI. Los pesos de terceros se descargan y convierten DURANTE el build,
-# así el contenedor arranca sin red hacia las fuentes de los modelos y un
-# Space que despierta no vuelve a bajar 2.6 GB.
+# así el contenedor arranca sin red hacia las fuentes de los modelos.
+# En producción lo construye deploy/oracle/deploy.sh en la VM de Oracle Cloud.
 
 FROM python:3.11-slim
 
@@ -18,7 +18,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends redis-server libglib2.0-0 libgomp1 \
  && rm -rf /var/lib/apt/lists/*
 
-# Hugging Face Spaces ejecuta el contenedor con el UID 1000.
+# Usuario sin privilegios (UID 1000: dueño de .secrets en la VM).
 RUN useradd --create-home --uid 1000 user
 USER user
 ENV HOME=/home/user \
@@ -33,7 +33,7 @@ RUN pip install --user -r requirements.txt
 
 # Pesos de terceros desde sus fuentes oficiales (scripts/fetch_models.py).
 # Va ANTES de copiar el código: así un cambio en app/ no invalida esta capa
-# ni vuelve a descargar 2.6 GB. Se borra la caché de Hugging Face en la misma
+# ni vuelve a descargar 2.6 GB. Se borra la caché de descargas en la misma
 # capa: el checkpoint original de la sonda (~2.1 GB) solo sirve para convertir.
 COPY --chown=user models ./models
 COPY --chown=user scripts/fetch_models.py ./scripts/fetch_models.py
@@ -47,8 +47,8 @@ COPY --chown=user . .
 
 RUN sed -i 's/\r$//' docker/start.sh && chmod +x docker/start.sh
 
-# Valores por defecto no secretos; los del Space (Settings) los sobrescriben.
-ENV PORT=7860 \
+# Valores por defecto no secretos; los de backend/.env los sobrescriben.
+ENV PORT=8000 \
     OMP_NUM_THREADS=2 \
     MKL_NUM_THREADS=2 \
     USE_LOCAL_STORAGE=false \
@@ -58,5 +58,5 @@ ENV PORT=7860 \
     CELERY_BROKER_URL=redis://127.0.0.1:6379/0 \
     CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/1
 
-EXPOSE 7860
+EXPOSE 8000
 CMD ["./docker/start.sh"]

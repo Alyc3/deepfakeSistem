@@ -3,7 +3,6 @@ import hashlib
 import json
 import os
 import struct
-from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives import serialization

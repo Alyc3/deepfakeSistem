@@ -88,24 +88,3 @@ def fake_probability(pil_image: Image.Image) -> float:
     with torch.no_grad():
         logit = model(_to_tensor(pil_image))
     return torch.sigmoid(logit)[0, 0].item()
-
-
-def aggregate_video(scores: list[float]) -> float:
-    """Segunda puntuación más alta de los fotogramas.
-
-    En un face swap el rostro está intercambiado en todo el video, pero los
-    artefactos solo son visibles en algunos fotogramas (según pose, expresión
-    e iluminación): los picos altos intermitentes son señal, no ruido, y un
-    promedio simple los diluye. La regla forense es exigir **dos detecciones
-    independientes**: el segundo máximo ignora por completo un pico único de
-    ruido (oclusión, desenfoque de movimiento en un video auténtico), pero en
-    cuanto dos fotogramas delatan el swap, el veredicto lo reflejan sin
-    dilución. Calibrado con casos reales de ambas clases: sobre material
-    auténtico el B7 puntúa <0.05 de forma consistente, así que dos picos
-    fuertes en un mismo video auténtico son extremadamente improbables.
-    """
-    if not scores:
-        return 0.0
-    if len(scores) == 1:
-        return scores[0]
-    return sorted(scores, reverse=True)[1]

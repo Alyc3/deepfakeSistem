@@ -1,6 +1,6 @@
 # Despliegue de la web en Render
 
-La aplicación web (`web/`) se despliega como un servicio Node en Render. El backend forense puede seguir en tu equipo mientras haces pruebas: la web se conecta a él desde un panel oculto.
+La aplicación web (`web/`) se despliega como un servicio Node en Render. El motor forense es el backend desplegado en Oracle Cloud (`https://157-151-202-23.sslip.io`, ver [DESPLIEGUE_ORACLE.md](DESPLIEGUE_ORACLE.md)). Para pruebas, un panel oculto permite conectar otro motor, por ejemplo el de tu equipo.
 
 ```text
 Navegador ──► CertiFace web (Render) ──► auth-service (FastAPI Cloud)
@@ -41,12 +41,12 @@ La versión de Node sale de `web/.node-version` (22, con el mínimo `>=22.23.4` 
 | `APP_ORIGIN` | La URL pública exacta, `https://<nombre-del-servicio>.onrender.com`. Si cambias el nombre del servicio, cámbiala: las peticiones de otro origen se rechazan. |
 | `AUTH_INTERNAL_API_KEY` | La `INTERNAL_API_KEY` del auth-service. |
 | `TRUSTED_PROXY_COUNT` | `1` (el proxy de Render). |
-| `CERTIFACE_API_URL` | Vacía hasta desplegar el backend. |
-| `FORENSICS_API_OVERRIDE` | `true` mientras uses el panel oculto. |
+| `CERTIFACE_API_URL` | `https://157-151-202-23.sslip.io` (el backend en Oracle Cloud). |
+| `FORENSICS_API_OVERRIDE` | `true` solo si quieres el panel oculto para probar otro motor; si no, `false`. |
 
 En el auth-service (FastAPI Cloud), `FRONTEND_URL` debe ser esa misma URL pública, para que los enlaces de recuperación e invitación lleguen a la web.
 
-## 4. Usar el motor forense de tu equipo
+## 4. Probar con el motor forense de tu equipo (opcional)
 
 Render no puede llegar a `http://127.0.0.1:8000` de tu equipo: es el servidor web quien llama al motor, no el navegador. Por eso el motor local se publica con un túnel HTTPS y la URL del túnel se pega en el panel oculto.
 
@@ -66,8 +66,6 @@ La elección vale solo para tu sesión y se borra al cerrarla. *Usar el del serv
 - En producción solo acepta HTTPS y los dominios de `FORENSICS_API_OVERRIDE_HOSTS`. Rechaza direcciones IP y dominios que resuelvan a redes internas.
 - El token del usuario viaja de servidor a servidor; el navegador nunca lo ve. `CERTIFACE_API_URL` tampoco se envía al navegador.
 
-Cuando despliegues el backend, define `CERTIFACE_API_URL` y pon `FORENSICS_API_OVERRIDE=false`.
-
 Las peticiones del motor tienen límites de tiempo: 4 minutos para un análisis directo y 2 para las del archivo forense. El análisis de los expedientes es asíncrono, así que el túnel no corta los trabajos largos.
 
 ## 5. Limitaciones del plan gratuito
@@ -79,4 +77,4 @@ Las peticiones del motor tienen límites de tiempo: 4 minutos para un análisis 
 
 - `https://<servicio>.onrender.com/login` carga la página de acceso.
 - Inicia sesión con una cuenta del auth-service.
-- Si el motor no está conectado, el laboratorio muestra «Motor no disponible»: conéctalo con el panel oculto.
+- El laboratorio muestra el motor conectado. Si indica «Motor no disponible», revisa `CERTIFACE_API_URL` y que `https://157-151-202-23.sslip.io/health/live` responda.

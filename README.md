@@ -1,11 +1,12 @@
 # CertiFace — Peritaje de Medios Digitales
 
-> **Estado actual:** la web usa Astro SSR, sidebar por permisos y sesiones
-> HttpOnly. El acceso usa el servicio central de usuarios y roles; `/predict`
-> requiere autenticación y permiso de laboratorio y responde `202` después de
-> preservar la evidencia y encolar la inferencia en Celery/Redis. Consulta
-> [la guía de integración](docs/autenticacion.md) para configuración, uso y pruebas, y
-> [el despliegue en Render](docs/DESPLIEGUE_RENDER.md) para publicar la web.
+> **Estado actual:** la web (Astro SSR) se publica en Render y el backend en una
+> VM de Oracle Cloud, en <https://157-151-202-23.sslip.io>, con despliegue
+> continuo desde GitHub Actions. La documentación de la API está en
+> [`/docs`](https://157-151-202-23.sslip.io/docs) (ReDoc). Guías:
+> [integración y acceso](docs/autenticacion.md),
+> [despliegue del backend](docs/DESPLIEGUE_ORACLE.md) y
+> [despliegue de la web](docs/DESPLIEGUE_RENDER.md).
 
 > **Almacén forense:** originales, copias, reportes JSON, láminas y el informe
 > PDF se preservan cifrados y sellados en R2. La inferencia siempre consume la
@@ -81,9 +82,11 @@ consulta el `job_id` hasta obtener el resultado.
 
 ```
 deepfakeSistem/
+├── .github/workflows/backend.yml  # CI/CD: pruebas y despliegue en Oracle Cloud
 ├── backend/
 │   ├── app/
-│   │   ├── main.py            # Rutas HTTP y despacho imagen/video
+│   │   ├── main.py            # Aplicación, ReDoc (/docs) y rutas de salud
+│   │   ├── api_docs.py        # Textos de la documentación de la API
 │   │   ├── model.py           # Orquestación: peritos, agregación y veredicto
 │   │   ├── faceswap_model.py  # Detector De Face Swap (B7, DFDC)
 │   │   ├── diffusion_model.py # Detector De Difusión Facial (SigLIP2)
@@ -94,7 +97,9 @@ deepfakeSistem/
 │   │   ├── report_pdf.py      # Informe PDF de análisis y observaciones
 │   │   ├── celery_app.py      # Broker/backend Celery sobre Redis
 │   │   ├── tasks.py           # Worker de inferencia asíncrona
-│   │   └── schemas.py         # (vacío, reservado para modelos Pydantic)
+│   │   └── schemas.py         # Esquemas de entrada y de salida de la API
+│   ├── deploy/oracle/         # setup.sh (VM nueva), deploy.sh (CI/CD), Compose y Caddy
+│   ├── tests/                 # Pruebas (las ejecuta GitHub Actions)
 │   ├── scripts/
 │   │   └── fetch_models.py    # Reconstruye los pesos no versionados
 │   ├── models/                # Ver models/README.md (catálogo y procedimiento)
@@ -244,21 +249,22 @@ uvicorn app.main:app --reload
 Queda escuchando en `http://127.0.0.1:8000`. Para exponerlo a otros equipos de
 la red, añade `--host 0.0.0.0`.
 
-### 6. Comprobar que responde
+### 7. Comprobar que responde
 
 ```bash
-curl http://127.0.0.1:8000/            # → {"status":"ok"}
+curl http://127.0.0.1:8000/health/live   # → {"status":"ok", ...}
 ```
 
-La documentación interactiva que genera FastAPI está en
-`http://127.0.0.1:8000/docs` y permite probar `/predict` subiendo un archivo.
-La respuesta es `202` con un `job_id`; el resultado se consulta en
-`GET /api/v1/jobs/{job_id}`.
+La documentación de la API (ReDoc) está en `http://127.0.0.1:8000/docs`: cada
+endpoint con su descripción, parámetros, respuestas y errores. El esquema
+OpenAPI está en `/openapi.json`.
 
-**Prueba directa desde la terminal:**
+**Prueba directa desde la terminal** (todas las rutas de análisis exigen un
+token del auth-service con permiso `laboratory`):
 
 ```bash
-curl -i -F "file=@../web/public/assets/muestras/sample-fake.jpg" http://127.0.0.1:8000/predict
+curl -i -H "Authorization: Bearer <token>" \
+  -F "file=@../web/public/assets/muestras/sample-fake.jpg" http://127.0.0.1:8000/predict
 ```
 
 ---
@@ -370,10 +376,23 @@ el BFF viven en el servidor. El despliegue en Render (`render.yaml`,
 `web/render-build.sh` y `web/.env.production`) está descrito en
 [`docs/DESPLIEGUE_RENDER.md`](docs/DESPLIEGUE_RENDER.md).
 
-El backend, Redis y el worker Celery son procesos separados que deben estar
-accesibles desde el servidor web, no desde el navegador. El servidor web aplica
-CSP estricta (`connect-src 'self'`), `nosniff`, `Referrer-Policy: no-referrer`,
-`X-Frame-Options: DENY` y HSTS en producción.
+El servidor web aplica CSP estricta (`connect-src 'self'`), `nosniff`,
+`Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` y HSTS en producción.
+
+### Backend: Oracle Cloud + GitHub Actions
+
+El backend corre en una VM `VM.Standard.A1.Flex` de Oracle Cloud (Always Free)
+con Docker: un contenedor con la API, el worker Celery y Redis, y Caddy delante
+para servir HTTPS. Cada push a `main` que toque `backend/` ejecuta el workflow
+[`.github/workflows/backend.yml`](.github/workflows/backend.yml):
+
+1. **Pruebas:** instala las dependencias y ejecuta `backend/tests`.
+2. **Despliegue** (si pasan): copia `backend/` a la VM por SSH, reconstruye la
+   imagen con `deploy/oracle/deploy.sh` y comprueba
+   `https://157-151-202-23.sslip.io/health/live`.
+
+La preparación de la VM, los secretos del repositorio y la operación diaria
+están en [`docs/DESPLIEGUE_ORACLE.md`](docs/DESPLIEGUE_ORACLE.md).
 
 ---
 
@@ -515,32 +534,23 @@ exactamente esta distribución de entrada.
 
 ## El backend en detalle
 
-### `main.py` — enrutamiento
+### Módulos de la API
 
-Expone rutas de salud, identidad, expedientes, custodia y laboratorio:
+| Módulo | Responsabilidad |
+|---|---|
+| `main.py` | Crea la aplicación, la documentación ReDoc, los middlewares (registro, CORS, límite de subida) y las rutas de salud |
+| `api_docs.py` | Descripción general de la API, grupos de endpoints y errores documentados |
+| `schemas.py` | Esquemas de entrada (validación) y de salida (documentación) |
+| `identity.py`, `identity_routes.py` | Validación del token en el auth-service, permisos por rol y pasarela de usuarios y roles |
+| `forensic_routes.py` | Expedientes, ingesta, análisis, trabajos, informes, descargas y custodia |
+| `forensic_workflow.py` | Preservación de la evidencia, inferencia y archivo del resultado y el PDF |
+| `tasks.py`, `local_jobs.py` | Ejecución del análisis en el worker Celery o en la propia API |
+| `storage/` | Cifrado, firma de manifiestos y almacén de objetos (R2 o local) |
 
-- **`GET /`** — comprobación de salud. Devuelve `{"status": "ok"}` y es lo que
-  consulta el indicador de estado del cliente.
-- **`POST /predict`** — preserva original/copia y encola el análisis; devuelve `202` con `job_id`.
-- **`GET /api/v1/jobs/{job_id}`** — consulta el estado y devuelve el resultado al perito propietario.
-
-El despacho entre imagen y video se decide con el **`content_type` del archivo
-subido** (`backend/app/main.py:25`):
-
-```python
-if file.content_type.startswith("video/"):
-    frames = extract_frames(contents)
-    result = predict_video(frames)
-    ...
-else:
-    result = predict_image(contents)
-```
-
-Por eso la aplicación web se preocupa de enviar el MIME correcto: si un `.mp4`
-llegara como `application/octet-stream`, el backend intentaría abrirlo como
-imagen y fallaría. Como el navegador deja el tipo vacío en varios contenedores
-de video, el MIME se deduce de la extensión con una tabla explícita del
-dominio (`web/src/domain/evidence.ts`).
+El tipo de análisis (imagen o video) se decide con el **`content_type` del
+archivo** (`forensic_workflow.run_inference`). Por eso la web envía el MIME
+correcto: el navegador deja vacío el tipo de varios contenedores de video, así
+que el MIME se deduce de la extensión (`web/src/domain/evidence.ts`).
 
 El navegador llama al BFF Astro en el mismo origen. El backend mantiene CORS
 configurable mediante `ALLOWED_ORIGINS`; no se deben usar orígenes abiertos en
@@ -819,158 +829,28 @@ enfocarlos, y las animaciones de barrido respetan `prefers-reduced-motion`.
 
 ## Contrato de la API
 
-### `GET /`
+La referencia completa está en **ReDoc**, generada a partir del código:
 
-```json
-{ "status": "ok" }
-```
+- Producción: <https://157-151-202-23.sslip.io/docs>
+- Local: `http://127.0.0.1:8000/docs`
 
-### `POST /predict`
+Cada endpoint incluye su descripción, parámetros, cuerpo, respuestas y errores.
+La prueba `backend/tests/test_api_docs.py` falla si un endpoint nuevo no está
+documentado.
 
-Cuerpo `multipart/form-data` con un único campo `file`. El backend preserva la
-evidencia original y una copia de trabajo antes de encolar la inferencia.
+| Grupo | Endpoints principales |
+|---|---|
+| Estado del servicio | `GET /health/live`, `GET /health/ready` |
+| Autenticación | `POST /api/v1/auth/login`, `GET /api/v1/auth/me`, `GET /api/v1/auth/profile` |
+| Usuarios y roles | `GET/POST /api/v1/users`, `PATCH /api/v1/users/{id}`, `GET/POST /api/v1/roles`, `PUT/DELETE /api/v1/roles/{id}` |
+| Expedientes | `GET/POST /api/v1/cases`, `GET .../{case_id}/summary`, `GET .../{case_id}/evidences` |
+| Evidencias y análisis | `POST .../{case_id}/ingest`, `POST .../{case_id}/analyze-async`, `POST .../{case_id}/analyze`, `POST /predict` |
+| Trabajos de análisis | `GET /api/v1/jobs/{job_id}` |
+| Archivo forense | `GET .../{case_id}/artifacts`, `GET .../artifacts/{id}/download`, `POST .../reports/{id}/finalize`, `GET .../{case_id}/custody-log`, `GET /api/v1/storage/status` |
 
-**Respuesta inmediata (`202 Accepted`):**
-
-```json
-{
-  "status": "queued",
-  "job_id": "uuid",
-  "case_id": "uuid",
-  "evidence_id": "uuid",
-  "report_id": "uuid",
-  "poll_after_ms": 2000
-}
-```
-
-Consulta `GET /api/v1/jobs/{job_id}`. Cuando `status` sea `completed`, el
-campo `result` contiene el dictamen que se documenta abajo. El trabajo se
-ejecuta con Celery y Redis fuera del proceso HTTP.
-
-**Resultado del trabajo para imagen:**
-
-```json
-{
-  "prediction": "Fake",
-  "confidence": 98.42,
-  "faces_detected": 1,
-  "models": { "synthesis_gan": 0.9842, "faceswap_dfdc": 0.1201, "diffusion_modern": 0.0512 }
-}
-```
-
-**Respuesta para video:**
-
-```json
-{
-  "prediction": "Fake",
-  "confidence": 91.3,
-  "frames_analyzed": 10,
-  "faces_detected": 9,
-  "frame_scores": [0.12, 0.88, 0.95, 0.11, 0.09, 0.91, 0.9, 0.2, 0.93, 0.17],
-  "suspicious_seconds": [{ "second": 2.4, "score": 0.9782 }, { "second": 4.1, "score": 0.695 }],
-  "models": { "synthesis_gan": 0.0312, "faceswap_dfdc": 0.913, "diffusion_modern": 0.0421 },
-  "explanation": {
-    "image": "data:image/jpeg;base64,…",
-    "second": 2.4,
-    "weights": { "synthesis_gan": 0.031, "faceswap_dfdc": 0.978, "diffusion_modern": 0.042 },
-    "width": 720,
-    "height": 405,
-    "featured_index": 11,
-    "frames": [
-      {
-        "index": 0,
-        "second": 0.0,
-        "signal": 0.1204,
-        "image": "data:image/jpeg;base64,…",
-        "weights": { "synthesis_gan": 0.02, "faceswap_dfdc": 0.12, "diffusion_modern": 0.03 },
-        "width": 640,
-        "height": 360
-      }
-    ]
-  }
-}
-```
-
-`explanation` es opcional y aditivo: el **mapa de calor explicativo**
-(EigenCAM fusionado por máximo ponderado de todos los peritos que
-participaron) superpuesto sobre el fotograma de mayor señal (`second`;
-`null` en imágenes), como data URI JPEG con lado mayor ≤ 720 px. `weights`
-son las señales por-fotograma que ponderaron la fusión.
-
-En video, `frames` trae **un mapa por cada fotograma analizado** (los 24),
-cada uno con su `index` en la secuencia, su `second`, su `signal` (la mayor
-de sus tres señales, la que fija su color dominante) y las `weights` de ese
-instante concreto, con lado mayor ≤ 640 px. `featured_index` señala cuál de
-ellos es el destacado. En imágenes `frames` no aparece: solo hay un mapa. Si
-el cálculo falla —de un fotograma o de todos— el campo o la entrada
-simplemente no aparecen: el veredicto nunca depende de ellos.
-
-Una respuesta de video con los 24 mapas pesa del orden de **1–3 MB**. Es el
-precio de que el dictamen viaje con su evidencia visual completa.
-
-`prediction` es la cadena `"Real"`, `"Fake"` o `"Suspect"`, y `confidence` un
-porcentaje entre 0 y 100 redondeado a dos decimales.
-
-**En video** el dictamen sale de la regla de `video_rule.py` (face swap
-sostenido y sonda de escena, ver «Calibración»); cada `"Suspect"` lleva un
-`caveat` que explica la duda: lectura de escena intermedia, face swap breve
-(dos fotogramas seguidos) o síntesis GAN alta sin corroborar. Lo que sigue
-describe la cascada de **imágenes**.
-
-**Dictamen con reserva (`"Suspect"`) y contraprueba de contexto:** cuando el
-único perito que condena es el detector de difusión y los otros dos están
-limpios (< 0.3), el sistema ejecuta una **contraprueba de contexto**: vuelve a
-analizar los encuadres completos (solo aquellos donde el rostro ocupa menos de
-la mitad del fotograma, mínimo 6 en video). El fundamento forense: un filtro
-de embellecimiento actúa sobre el rostro, pero la generación por difusión
-fabrica el encuadre entero — fondo incluido.
-
-- Firma también en el entorno (mediana > 0.5) → **`"Fake"` pleno**: generación
-  global confirmada. El valor aparece como `models.scene_generated` y la
-  interfaz lo muestra como «ESCENA».
-- Firma solo en el rostro → **`"Suspect"`** con `caveat`: patrón compatible
-  con filtros o procesado de cámara sobre material auténtico.
-- Sin encuadres contrastables (primer plano) → **`"Suspect"`** prudente.
-
-La reserva existe porque la clase de falsos positivos del detector está
-verificada empíricamente: un video auténtico con filtros llegó a puntuar por
-encima de uno genuinamente generado. La interfaz muestra `"Suspect"` como
-sello **INDICIOS** en ámbar con borde discontinuo, la etiqueta «Señal de
-generación» en lugar de «Confianza», y la nota de reserva. Las condenas por
-face swap o GAN siguen saliendo como `"Fake"` pleno.
-
-**Verificación de todo veredicto `"Real"`:** antes de certificar, la sonda
-de escena examina el encuadre completo como segunda opinión sistemática —
-un generador reciente llegó a dejar el rostro casi limpio (señal facial
-0.13, por debajo del real más alto observado) y solo el encuadre podía
-delatarlo. Escena > 0.75 → condena plena (listón alto: la sonda condena en
-solitario y su ruido sobre material auténtico llega casi a 0.5); escena
-≥ 0.55 o señal facial en zona gris (0.25–0.5, donde los generadores
-recientes han puntuado 0.27 y 0.34) → `"Suspect"` con peritaje manual;
-escena limpia y señal facial baja → `"Real"` verificado, con la lectura
-registrada en `models.scene_generated` como evidencia positiva. En primeros planos la
-sonda examina el fotograma tal cual — la opinión de un modelo independiente
-sobre el mismo contenido, no una lectura de entorno.
-
-**Lenguaje del dictamen:** el veredicto `"Real"` se muestra como **REAL**; el
-porcentaje de confianza que lo acompaña es el que orienta la decisión del
-perito, y la zona gris garantiza que una señal de generación sin explicar
-nunca llega a este sello. `faces_detected` indica en
-cuántos fotogramas (o en la imagen) se pudo recortar un rostro; si es 0, el
-veredicto se emitió sobre el encuadre completo y la aplicación lo advierte.
-`frame_scores` es, por fotograma, la probabilidad de face swap (0 sin
-rostro). `models` desglosa la puntuación agregada de cada detector:
-`synthesis_gan`, `faceswap_dfdc` (en video, el nivel sostenido),
-`diffusion_modern` y, cuando la sonda participó, `scene_generated`.
-`decisive_models` lista los que deciden (en video, face swap y escena; el
-resto es orientativo) y `scene_probes` cada lectura de la sonda con su
-fotograma.
-
-**Errores:** si el video no se puede decodificar (códec no soportado), el
-endpoint responde `422` con un campo `detail` que explica la causa; la
-aplicación web muestra ese mensaje tal cual en el registro del análisis.
-
----
+Los análisis son asíncronos: `analyze-async` (o `/predict`) responde con un
+`job_id` y `GET /api/v1/jobs/{job_id}` devuelve el progreso hasta que el estado
+es `completed` (con el resultado) o `failed`.
 
 ## Limitaciones conocidas
 
