@@ -16,7 +16,6 @@ import { el } from "../dom";
 interface HeatmapView {
   explanation: Explanation;
   frames: ExplanationFrame[];
-  selected: number;
 }
 
 let view: HeatmapView | null = null;
@@ -30,7 +29,6 @@ function showFrame(position: number): void {
   const total = view.frames.length;
   const index = ((position % total) + total) % total;
   const frame = view.frames[index]!;
-  view.selected = index;
 
   el.heatmapImage.src = frame.image;
   el.heatmapFrame.textContent =
@@ -103,7 +101,7 @@ export function renderHeatmap(result: AnalysisResult): void {
   // el destacado se muestra a través de la tira, para que el visor grande y
   // la selección compartan una sola fuente de verdad.
   const frames = explanation.frames ?? [];
-  view = { explanation, frames, selected: 0 };
+  view = { explanation, frames };
 
   if (frames.length > 1) {
     buildStrip(frames, explanation.featured_index);
@@ -126,22 +124,9 @@ export function renderHeatmap(result: AnalysisResult): void {
   el.heatmap.hidden = false;
 }
 
-/** Recorre la tira con el teclado (← →). */
-export function stepHeatmapFrame(delta: number): boolean {
-  if (!view || view.frames.length <= 1 || el.heatmap.hidden) return false;
-  showFrame(view.selected + delta);
-  return true;
-}
-
-export const heatmapHasStrip = (): boolean =>
-  Boolean(view && view.frames.length > 1) && !el.heatmap.hidden;
-
 export function toggleHeatmapZoom(force?: boolean): void {
   el.heatmapFigure.classList.toggle("expanded", force);
 }
-
-export const heatmapIsExpanded = (): boolean =>
-  el.heatmapFigure.classList.contains("expanded");
 
 export function clearHeatmap(): void {
   view = null;

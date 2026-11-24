@@ -88,7 +88,7 @@ export function admitFile(file: File): void {
   handleInspection(lab().selectEvidence(file));
 }
 
-export function resetAll(): void {
+function resetAll(): void {
   clearAnalysisOutputs();
   clearLog();
   clearCustody();
@@ -96,7 +96,7 @@ export function resetAll(): void {
   el.fileInput.value = "";
 }
 
-export function openFilePicker(): void {
+function openFilePicker(): void {
   el.fileInput.click();
 }
 

@@ -285,9 +285,9 @@ equipos de la red: `npm run dev -- --host`.
 
 La web habla con el auth-service y con el motor forense desde su propio
 servidor, con las variables de `web/.env` (ver `docs/autenticacion.md`). El
-motor por defecto es `CERTIFACE_API_URL` (`http://127.0.0.1:8000` en local).
-Con `FORENSICS_API_OVERRIDE=true`, **Ctrl + Alt + Shift + M** abre un panel
-oculto para que tu sesión use otro motor.
+motor es `CERTIFACE_API_URL`: el backend de Oracle Cloud
+(`https://157-151-202-23.sslip.io`), o `http://127.0.0.1:8000` si quieres usar
+el backend de tu equipo.
 
 > La huella SHA-256 de la cadena de custodia usa Web Crypto, que los
 > navegadores solo ofrecen en **contextos seguros** (`localhost` o `https://`).
@@ -337,23 +337,6 @@ oculto para que tu sesión use otro motor.
 El punto de color de la barra superior indica el estado del backend: moss en
 línea, naranja fuera de línea, ámbar comprobando. Clic sobre el texto para
 volver a comprobar.
-
-### Atajos de teclado
-
-| Atajo | Acción |
-|---|---|
-| `Ctrl/Cmd + O` | Abrir archivo |
-| `Ctrl/Cmd + Enter` | Ejecutar análisis |
-| `Alt + N` | Nuevo examen (limpiar la selección) |
-| `Ctrl/Cmd + ,` | Abrir la seguridad de la cuenta |
-| `Ctrl/Cmd + Shift + L` | Cerrar sesión |
-| `Ctrl + Alt + Shift + M` | Conectar la sesión a otro motor forense (panel oculto, en cualquier pantalla) |
-| `←` / `→` | Recorrer los mapas de calor de los fotogramas analizados |
-| `Esc` | Cerrar el mapa de calor ampliado |
-
-Sustituyen al menú de la aplicación de escritorio anterior. Se evitan a
-propósito las combinaciones que el navegador reserva para sí (`Ctrl+R`
-recarga la página), por eso «Nuevo examen» usa `Alt+N`.
 
 ---
 
@@ -703,7 +686,7 @@ de trabajo antes de encolar la inferencia. Eso tiene tres consecuencias de dise�
 
 1. **El token nunca llega al navegador** y no hace falta CORS: la petición al
    backend es de servidor a servidor. El motor de destino es
-   `CERTIFACE_API_URL` o el que la sesión eligió en el panel oculto.
+   `CERTIFACE_API_URL`.
 2. El **MIME se determina por extensión** con la tabla del dominio, no por lo
    que declare el navegador (que deja vacío el tipo de varios contenedores de
    video). Es justo lo que el backend necesita para distinguir imagen de video.
@@ -782,7 +765,6 @@ Los repositorios de `src/infrastructure/storage/` guardan:
 
 | Clave | Almacén | Contenido |
 |---|---|---|
-| `certiface:engine-url` | `localStorage` | Última URL escrita en el panel oculto del motor (solo para rellenarlo) |
 | `certiface:history` | `localStorage` | Últimos cinco casos (nombre, dictamen, confianza) |
 | `certiface:session` | Cookie HttpOnly del servidor Astro | Sesión autenticada |
 
@@ -884,7 +866,7 @@ es `completed` (con el resultado) o `failed`.
 |---|---|
 | `FileNotFoundError: models/Detector_De_Sintesis_GAN.pth` | Lanzaste `uvicorn` desde otro directorio. Hazlo desde `backend/`. |
 | `Form data requires "python-multipart"` | Falta esa dependencia: `pip install -r requirements.txt`. |
-| La barra de estado dice «Backend fuera de línea» | El backend no está arrancado, o la URL configurada no coincide. Verifica con `curl http://127.0.0.1:8000/`, revisa `CERTIFACE_API_URL` o conéctalo con `Ctrl+Alt+Shift+M`. |
+| La barra de estado dice «Backend fuera de línea» | El backend no está arrancado, o la URL configurada no coincide. Verifica con `curl http://127.0.0.1:8000/`, revisa `CERTIFACE_API_URL` en `web/.env` y reinicia la web. |
 | El acceso —o la verificación de integridad— dice que el navegador no ofrece criptografía segura | Estás sirviendo el laboratorio por `http://` contra una IP. Web Crypto solo existe en contextos seguros: usa `localhost` o publica por HTTPS. |
 | La huella no coincide y el material parece el mismo | Comprueba que el acta registre la huella del **archivo original** y no la de una copia recomprimida (WhatsApp, exportaciones de edición y algunas descargas re-codifican el video y cambian todos sus bits). El aviso es correcto: ese archivo no es el que se recibió. |
 | El panel de custodia no aparece | Solo se muestra con material cargado. Si aparece pero la huella dice «no disponible», es el contexto inseguro de la fila anterior. |

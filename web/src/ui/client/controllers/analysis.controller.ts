@@ -38,7 +38,7 @@ export function setLoading(loading: boolean): void {
       : "Ejecutar análisis";
 }
 
-export async function analyze(): Promise<void> {
+async function analyze(): Promise<void> {
   const file = state.file;
   if (!file || state.loading) return;
 
