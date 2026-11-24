@@ -12,6 +12,5 @@ declare namespace App {
     accessRenewAt: number;
     authenticatedAt: number;
     mfaToken: string;
-    forensicsApiUrl: string;
   }
 }

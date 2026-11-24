@@ -5,7 +5,6 @@ import { wireIdentity } from "./controllers/identity.controller";
 import { wireEvidence, setFile } from "./controllers/evidence.controller";
 import { wireAnalysis } from "./controllers/analysis.controller";
 import { refreshHealth } from "./controllers/engine-status.controller";
-import { wireShortcuts } from "./controllers/shortcuts";
 import { renderHistory } from "./presenters/history.presenter";
 import { emitFinalVerdict } from "./presenters/checklist.presenter";
 import { toggleHeatmapZoom } from "./presenters/heatmap.presenter";
@@ -13,7 +12,6 @@ import { handleLogout } from "./controllers/auth.controller";
 import { wireCases } from "./controllers/cases.controller";
 import { wireAccount } from "./controllers/account.controller";
 import { wireAudit } from "./controllers/audit.controller";
-import { wireEngineConnection } from "./controllers/connection.controller";
 import { installActivityBar, setBusy } from "./loading";
 
 export function startLab(): void {
@@ -56,9 +54,6 @@ export function startLab(): void {
   syncToggle();
   mobile.addEventListener("change", () => { menu(false); sidebar.inert = mobile.matches; syncToggle(); });
   toggle.addEventListener("click", toggleSidebar);
-  document.addEventListener("keydown", (event) => {
-    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "b") { event.preventDefault(); toggleSidebar(); }
-  });
   backdrop.addEventListener("click", () => { menu(false); syncToggle(); });
   document.addEventListener("keydown", (event) => {
     if (!sidebar.classList.contains("is-open")) return;
@@ -69,17 +64,17 @@ export function startLab(): void {
       else if (!event.shiftKey && document.activeElement === links.at(-1)) { event.preventDefault(); links[0]?.focus(); }
     }
   });
-  // Panel oculto del motor forense (Ctrl+Alt+Shift+M); solo existe si el servidor lo habilita.
-  wireEngineConnection(() => { if (section === "laboratorio") void refreshHealth(); });
   if (section === "usuarios" || section === "roles") wireIdentity();
   if (section === "casos") wireCases();
   if (section === "perfil" || section === "seguridad") wireAccount(section);
   if (section === "auditoria") wireAudit(JSON.parse(shell.dataset.permissions ?? "[]").includes("users"));
   if (section === "laboratorio") {
     state.history = lab().listCases(); renderHistory(); setFile(null);
-    wireEvidence(); wireAnalysis(); wireShortcuts();
+    wireEvidence(); wireAnalysis();
     el.checklistSubmit.addEventListener("click", emitFinalVerdict);
     el.heatmapFigure.addEventListener("click", () => toggleHeatmapZoom());
+    // Esc cierra el mapa ampliado, como cualquier ventana superpuesta.
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape") toggleHeatmapZoom(false); });
     el.historyClear.addEventListener("click", () => { state.history = lab().clearCases(); renderHistory(); });
     el.statusText.addEventListener("click", () => void refreshHealth());
     void refreshHealth();

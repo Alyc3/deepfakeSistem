@@ -21,10 +21,6 @@ services:
         sync: false
       - key: CERTIFACE_API_URL
         value: https://157-151-202-23.sslip.io
-      - key: FORENSICS_API_OVERRIDE
-        value: "true"
-      - key: FORENSICS_API_OVERRIDE_HOSTS
-        value: "*.trycloudflare.com,*.ngrok-free.app,*.ngrok.app"
       - key: APP_ORIGIN
         value: https://certiface-web.onrender.com
       - key: SESSION_TTL_SECONDS

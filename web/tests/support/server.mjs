@@ -132,7 +132,7 @@ export async function startTestServer() {
     cwd: fileURLToPath(new URL('../../', import.meta.url)), windowsHide: true,
     env: { ...process.env, TEST_APP_PORT: String(port), TEST_RUNTIME_DIR: runtime, SESSION_DIR: join(runtime, 'sessions'),
       NODE_ENV: 'development', AUTH_SERVICE_URL: mockOrigin, CERTIFACE_API_URL: mockOrigin, APP_ORIGIN: origin,
-      AUTH_INTERNAL_API_KEY: 'fixture-internal-key', FORENSICS_API_OVERRIDE: 'true', ROLE_PERMISSIONS: JSON.stringify(policy), DEFAULT_PERMISSIONS: '["profile","security"]' },
+      AUTH_INTERNAL_API_KEY: 'fixture-internal-key', ROLE_PERMISSIONS: JSON.stringify(policy), DEFAULT_PERMISSIONS: '["profile","security"]' },
     stdio: ['ignore','pipe','pipe'],
   });
   let log = ''; child.stdout.on('data', (data) => log += data); child.stderr.on('data', (data) => log += data);

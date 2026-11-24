@@ -28,11 +28,9 @@ Web:
   (`X-Client-IP`, `X-Client-User-Agent`). Sin ella, el auth-service ve a todos con la IP
   del servidor web y su rate limit (login 10/min, refresh 30/min por IP) se reparte
   entre todos los usuarios.
-- `CERTIFACE_API_URL`: motor forense por defecto, llamado solo desde el servidor web. Puede
-  quedar vacía mientras el backend no esté desplegado.
-- `FORENSICS_API_OVERRIDE`: `true` habilita el panel oculto (Ctrl+Alt+Shift+M) para que una
-  sesión con laboratorio use otro motor, por ejemplo el local publicado con un túnel.
-- `FORENSICS_API_OVERRIDE_HOSTS`: dominios HTTPS que el panel acepta en producción.
+- `CERTIFACE_API_URL`: motor forense (backend), llamado solo desde el servidor web.
+  Obligatoria. Producción: `https://157-151-202-23.sslip.io`; backend local:
+  `http://127.0.0.1:8000`.
 - `APP_ORIGIN`: origen público exacto; en desarrollo `http://localhost:4321`.
 - `SESSION_TTL_SECONDS`: duración máxima de la sesión desde el login (segundos). Dentro
   de ese tiempo los tokens se renuevan solos.

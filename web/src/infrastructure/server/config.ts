@@ -4,8 +4,6 @@ const buildEnvironment: Record<string, string | undefined> = {
   AUTH_SERVICE_URL: import.meta.env.AUTH_SERVICE_URL,
   AUTH_INTERNAL_API_KEY: import.meta.env.AUTH_INTERNAL_API_KEY,
   CERTIFACE_API_URL: import.meta.env.CERTIFACE_API_URL,
-  FORENSICS_API_OVERRIDE: import.meta.env.FORENSICS_API_OVERRIDE,
-  FORENSICS_API_OVERRIDE_HOSTS: import.meta.env.FORENSICS_API_OVERRIDE_HOSTS,
   APP_ORIGIN: import.meta.env.APP_ORIGIN,
   ROLE_PERMISSIONS: import.meta.env.ROLE_PERMISSIONS,
   DEFAULT_PERMISSIONS: import.meta.env.DEFAULT_PERMISSIONS,
@@ -18,7 +16,7 @@ function env(key: string): string {
   return value.length >= 2 && value[0] === value.at(-1) && (value[0] === "'" || value[0] === '"') ? value.slice(1, -1).trim() : value;
 }
 /** URL absoluta http(s) sin credenciales, query ni fragmento, y sin barra final. */
-export function parseServiceUrl(value: string, key: string): string {
+function parseServiceUrl(value: string, key: string): string {
   let parsed: URL;
   try { parsed = new URL(value); }
   catch { throw new Error(`Configuración inválida: ${key} debe ser una URL absoluta con http:// o https://.`); }
@@ -35,22 +33,14 @@ function nonNegativeInteger(key: string, fallback: number): number {
   const value = Number(env(key) || fallback);
   return Number.isInteger(value) && value >= 0 ? value : fallback;
 }
-const list = (value: string) => value.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
-
 export function serverConfig() {
   return {
     authUrl: serviceUrl("AUTH_SERVICE_URL"),
     // Opcional pero recomendada: la misma INTERNAL_API_KEY del auth-service. Con ella se reenvían la IP y el
     // navegador reales del usuario; sin ella, el auth-service ve a todos con la IP de este servidor.
     internalApiKey: env("AUTH_INTERNAL_API_KEY"),
-    // Motor forense por defecto. Puede faltar mientras el backend no esté desplegado.
-    apiUrl: env("CERTIFACE_API_URL") ? serviceUrl("CERTIFACE_API_URL") : "",
-    // Panel oculto (Ctrl+Alt+Shift+M) para que cada sesión use otro motor, p. ej. uno local publicado con un túnel.
-    forensicsOverride: {
-      enabled: env("FORENSICS_API_OVERRIDE") === "true",
-      // En producción solo se aceptan estos dominios (comodín con *.); en desarrollo, cualquier URL.
-      hosts: list(env("FORENSICS_API_OVERRIDE_HOSTS") || "*.trycloudflare.com,*.ngrok-free.app,*.ngrok.app"),
-    },
+    // Motor forense (backend). Solo lo llama este servidor; el navegador nunca ve la URL.
+    apiUrl: serviceUrl("CERTIFACE_API_URL"),
     origin: new URL(serviceUrl("APP_ORIGIN")).origin,
     policy: JSON.parse(env("ROLE_PERMISSIONS") || "{}") as AccessPolicy,
     fallback: JSON.parse(env("DEFAULT_PERMISSIONS") || "[]") as Permission[],

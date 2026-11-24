@@ -1,11 +1,11 @@
 # Despliegue de la web en Render
 
-La aplicación web (`web/`) se despliega como un servicio Node en Render. El motor forense es el backend desplegado en Oracle Cloud (`https://157-151-202-23.sslip.io`, ver [DESPLIEGUE_ORACLE.md](DESPLIEGUE_ORACLE.md)). Para pruebas, un panel oculto permite conectar otro motor, por ejemplo el de tu equipo.
+La aplicación web (`web/`) se despliega como un servicio Node en Render. El motor forense es el backend desplegado en Oracle Cloud (`https://157-151-202-23.sslip.io`, ver [DESPLIEGUE_ORACLE.md](DESPLIEGUE_ORACLE.md)). La web lo llama siempre desde `CERTIFACE_API_URL`; no hay que configurar nada en la interfaz.
 
 ```text
 Navegador ──► CertiFace web (Render) ──► auth-service (FastAPI Cloud)
                        │
-                       └──► motor forense: CERTIFACE_API_URL o el elegido en el panel oculto
+                       └──► motor forense (Oracle Cloud): CERTIFACE_API_URL
 ```
 
 ## 1. Crear el servicio
@@ -42,31 +42,14 @@ La versión de Node sale de `web/.node-version` (22, con el mínimo `>=22.23.4` 
 | `AUTH_INTERNAL_API_KEY` | La `INTERNAL_API_KEY` del auth-service. |
 | `TRUSTED_PROXY_COUNT` | `1` (el proxy de Render). |
 | `CERTIFACE_API_URL` | `https://157-151-202-23.sslip.io` (el backend en Oracle Cloud). |
-| `FORENSICS_API_OVERRIDE` | `true` solo si quieres el panel oculto para probar otro motor; si no, `false`. |
 
 En el auth-service (FastAPI Cloud), `FRONTEND_URL` debe ser esa misma URL pública, para que los enlaces de recuperación e invitación lleguen a la web.
 
-## 4. Probar con el motor forense de tu equipo (opcional)
+## 4. Conexión con el motor forense
 
-Render no puede llegar a `http://127.0.0.1:8000` de tu equipo: es el servidor web quien llama al motor, no el navegador. Por eso el motor local se publica con un túnel HTTPS y la URL del túnel se pega en el panel oculto.
-
-1. Arranca el backend en local (`backend/start.ps1`, puerto 8000).
-2. Abre un túnel. No necesita cuenta:
-   ```bash
-   cloudflared tunnel --url http://localhost:8000
-   ```
-   Copia la URL `https://….trycloudflare.com` que muestra. También vale `ngrok http 8000`.
-3. En la web, ya con sesión iniciada con un rol con laboratorio, pulsa **Ctrl + Alt + Shift + M**.
-4. Pega la URL y pulsa *Probar y conectar*. La web comprueba `/health/live` antes de guardarla.
-
-La elección vale solo para tu sesión y se borra al cerrarla. *Usar el del servidor* vuelve a `CERTIFACE_API_URL`.
-
-**Seguridad del panel:**
-- Solo existe con `FORENSICS_API_OVERRIDE=true` y para roles con permiso `laboratory`.
-- En producción solo acepta HTTPS y los dominios de `FORENSICS_API_OVERRIDE_HOSTS`. Rechaza direcciones IP y dominios que resuelvan a redes internas.
-- El token del usuario viaja de servidor a servidor; el navegador nunca lo ve. `CERTIFACE_API_URL` tampoco se envía al navegador.
-
-Las peticiones del motor tienen límites de tiempo: 4 minutos para un análisis directo y 2 para las del archivo forense. El análisis de los expedientes es asíncrono, así que el túnel no corta los trabajos largos.
+- Es el servidor web quien llama al motor, no el navegador. El token del usuario viaja de servidor a servidor, y ni el token ni `CERTIFACE_API_URL` llegan al navegador.
+- Para cambiar de motor, cambia `CERTIFACE_API_URL` en Render (*Environment*) y vuelve a desplegar. Para desarrollo local con el backend de tu equipo, usa `http://127.0.0.1:8000` en `web/.env`.
+- Las peticiones del motor tienen límites de tiempo: 4 minutos para un análisis directo y 2 para las del archivo forense. El análisis de los expedientes es asíncrono, así que los trabajos largos no se cortan.
 
 ## 5. Limitaciones del plan gratuito
 
