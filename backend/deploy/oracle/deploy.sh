@@ -15,7 +15,8 @@ say()  { printf '\n\033[1;33m==> %s\033[0m\n' "$*"; }
 fail() { printf '\n\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
 [[ -f .env ]] || fail "Falta backend/.env en la VM."
-[[ -f .secrets/manifest-signing.pem ]] || fail "Falta backend/.secrets/manifest-signing.pem en la VM."
+# .secrets pertenece al UID 1000 del contenedor (modo 700): solo root puede verlo.
+sudo test -f .secrets/manifest-signing.pem || fail "Falta backend/.secrets/manifest-signing.pem en la VM."
 [[ -f deploy/oracle/.env ]] || fail "Falta deploy/oracle/.env: ejecuta primero deploy/oracle/setup.sh."
 
 say "Construyendo la imagen"
