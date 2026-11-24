@@ -191,6 +191,30 @@ _dinov2_transform = transforms.Compose([
 ])
 
 
+def _siglip_output_norm() -> nn.Module:
+    """Capa final de la torre SigLIP: sus tokens de parche alimentan el mapa de calor."""
+    tower = model.siglip
+    norm = getattr(tower, "post_layernorm", None)
+    return norm if norm is not None else tower.vision_model.post_layernorm
+
+
+def score(pil_image: Image.Image) -> tuple[float, torch.Tensor | None]:
+    """Probabilidad y tokens de la torre SigLIP en una sola pasada.
+
+    La sonda es el modelo más caro del sistema: guardar los tokens permite
+    dibujar después el mapa de calor de ese encuadre sin volver a ejecutarla.
+    """
+    captured = {}
+    handle = _siglip_output_norm().register_forward_hook(
+        lambda _m, _i, output: captured.update(tokens=output)
+    )
+    try:
+        probability = fake_probability(pil_image)
+    finally:
+        handle.remove()
+    return probability, captured.get("tokens")
+
+
 def fake_probability(pil_image: Image.Image) -> float:
     """Probabilidad [0, 1] de que el encuadre completo sea generado por IA."""
     if pil_image.mode != "RGB":

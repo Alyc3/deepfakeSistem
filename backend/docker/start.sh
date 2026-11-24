@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Arranque del contenedor: Redis -> worker Celery -> API FastAPI.
-# Si cualquiera de los tres procesos muere, el contenedor termina para que
+# Arranque del contenedor: API FastAPI y, solo con INFERENCE_MODE=worker, Redis y el worker Celery.
+# Si cualquiera de los procesos muere, el contenedor termina para que
 # Docker lo reinicie (restart: unless-stopped) en vez de quedar una API sin worker.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -28,21 +28,26 @@ except OSError as exc:
     print(f"[start] ADVERTENCIA: no se pudo abrir TCP a PostgreSQL ({exc}).")
 PY
 
-# 3. Redis local, solo en loopback y sin persistencia (los resultados de
-#    Celery son efímeros; lo pericial vive en PostgreSQL y R2).
-redis-server --bind 127.0.0.1 --port 6379 --save "" --appendonly no --dir /tmp &
-for _ in $(seq 1 30); do
-  redis-cli -h 127.0.0.1 ping >/dev/null 2>&1 && break
-  sleep 0.5
-done
-log "Redis listo"
+# 3. Quién analiza. Por defecto (local/auto) la propia API, con los modelos cargados una sola vez.
+#    Un worker carga otra copia de los modelos (~5 GB): en una VM de 12 GB, API + worker agotan
+#    la memoria al analizar un video. Solo se arrancan con INFERENCE_MODE=worker.
+if [[ "${INFERENCE_MODE:-auto}" == "worker" ]]; then
+  # Redis local, solo en loopback y sin persistencia (los resultados de
+  # Celery son efímeros; lo pericial vive en PostgreSQL y R2).
+  redis-server --bind 127.0.0.1 --port 6379 --save "" --appendonly no --dir /tmp &
+  for _ in $(seq 1 30); do
+    redis-cli -h 127.0.0.1 ping >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+  log "Redis listo"
+  # Un trabajo a la vez (pool solo) para no duplicar los modelos con varios procesos hijos.
+  celery -A app.celery_app worker --pool=solo --loglevel=INFO &
+  log "Worker Celery iniciado"
+else
+  log "Inferencia dentro de la API (INFERENCE_MODE=${INFERENCE_MODE:-auto}); sin Redis ni worker"
+fi
 
-# 4. Worker Celery: un trabajo a la vez (pool solo) para no duplicar los
-#    modelos en memoria con varios procesos hijos.
-celery -A app.celery_app worker --pool=solo --loglevel=INFO &
-log "Worker Celery iniciado"
-
-# 5. API. --proxy-headers para registrar la IP real del cliente en la
+# 4. API. --proxy-headers para registrar la IP real del cliente en la
 #    cadena de custodia (Caddy hace de proxy delante).
 uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}" \
   --proxy-headers --forwarded-allow-ips='*' &

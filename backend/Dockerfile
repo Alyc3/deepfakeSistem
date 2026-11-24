@@ -1,8 +1,9 @@
 # CertiFace backend — imagen única (CPU, amd64 o arm64).
 #
-# Un solo contenedor ejecuta Redis (broker local), el worker Celery y la API
-# FastAPI. Los pesos de terceros se descargan y convierten DURANTE el build,
-# así el contenedor arranca sin red hacia las fuentes de los modelos.
+# Un solo contenedor ejecuta la API FastAPI, que también analiza (INFERENCE_MODE=local).
+# Redis y el worker Celery solo arrancan con INFERENCE_MODE=worker (docker/start.sh).
+# Los pesos de terceros se descargan y convierten DURANTE el build, así el
+# contenedor arranca sin red hacia las fuentes de los modelos.
 # En producción lo construye deploy/oracle/deploy.sh en la VM de Oracle Cloud.
 
 FROM python:3.11-slim

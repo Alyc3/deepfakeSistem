@@ -114,14 +114,17 @@ def _eigencam(activations: torch.Tensor):
     channels = a.shape[0]
     height, width = a.shape[1], a.shape[2]
 
-    flat = a.reshape(channels, -1).T          # [H·W, C]
-    flat = flat - flat.mean(axis=0, keepdims=True)
+    flat = a.reshape(channels, -1).T.astype(np.float64)   # [H·W, C]
+    flat -= flat.mean(axis=0, keepdims=True)
+    # La proyección sobre la primera dirección principal es U[:, 0]·S[0]: el vector
+    # propio dominante de la matriz de Gram [H·W, H·W] la da sin la SVD completa.
+    # Mucho más barato cuando C ≫ H·W (B7: 2560 canales y 144 posiciones).
     try:
-        _, _, vt = np.linalg.svd(flat, full_matrices=False)
+        eigenvalues, eigenvectors = np.linalg.eigh(flat @ flat.T)
     except np.linalg.LinAlgError:
         return None
 
-    proj = flat @ vt[0]                       # [H·W]
+    proj = eigenvectors[:, -1] * np.sqrt(max(eigenvalues[-1], 0.0))   # [H·W]
     if abs(proj.min()) > abs(proj.max()):
         proj = -proj
     proj = np.maximum(proj, 0)
@@ -300,34 +303,11 @@ def capture_facial_cams():
     return FacialCapture()
 
 
-def _scene_cam(frame: Image.Image):
-    """Sonda De Escena Generada: torre SigLIP del ensemble, encuadre entero."""
-    tower = scene_model.model.siglip
-    layernorm = getattr(tower, "post_layernorm", None)
-    if layernorm is None:
-        layernorm = tower.vision_model.post_layernorm
-
-    captured = {}
-    handle = layernorm.register_forward_hook(
-        lambda _m, _i, output: captured.update(a=output)
-    )
-    try:
-        if frame.mode != "RGB":
-            frame = frame.convert("RGB")
-        siglip_pixels = scene_model._siglip_processor(images=frame, return_tensors="pt")[
-            "pixel_values"
-        ].to(scene_model.device)
-        dinov2_pixels = scene_model._dinov2_transform(frame).unsqueeze(0).to(
-            scene_model.device
-        )
-        with torch.no_grad():
-            scene_model.model(siglip_pixels, dinov2_pixels)
-    finally:
-        handle.remove()
-
-    if "a" not in captured:
+def _scene_cam(tokens):
+    """Sonda De Escena Generada: CAM desde los tokens de su torre SigLIP (scene_model.score)."""
+    if tokens is None:
         return None
-    grid = _tokens_to_grid(captured["a"][0])
+    grid = _tokens_to_grid(tokens[0])
     return _eigencam(grid) if grid is not None else None
 
 
@@ -386,6 +366,7 @@ def build_explanation(
     with_scene=True,
     max_side=MAX_SIDE,
     quality=JPEG_QUALITY,
+    scene_tokens=None,
 ):
     """Construye el mapa de calor fusionado sobre el fotograma completo.
 
@@ -393,7 +374,9 @@ def build_explanation(
     en píxeles del fotograma. weights: señal por detector (claves del campo
     "models" de la respuesta). facial_cams: rejillas ya capturadas durante la
     inferencia (ver FacialCapture); si no se pasan, se recalculan con una
-    pasada extra por cada modelo. Devuelve el dict del campo "explanation" o
+    pasada extra por cada modelo. scene_tokens: tokens que la sonda de escena
+    ya produjo sobre este mismo encuadre (scene_model.score); sin ellos, la
+    sonda se ejecuta otra vez solo para el mapa. Devuelve el dict del campo "explanation" o
     None si ningún mapa pudo calcularse.
     """
     if frame.mode != "RGB":
@@ -425,7 +408,9 @@ def build_explanation(
     scene_weight = weights.get("scene_generated") if with_scene else None
     if scene_weight is not None and scene_weight >= SCENE_CAM_MIN_WEIGHT:
         try:
-            cam = _scene_cam(frame)
+            if scene_tokens is None:
+                scene_tokens = scene_model.score(frame)[1]
+            cam = _scene_cam(scene_tokens)
         except Exception:
             logger.exception("Fallo el CAM de la sonda de escena; se omite.")
             cam = None

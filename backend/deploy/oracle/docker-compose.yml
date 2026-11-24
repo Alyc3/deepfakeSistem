@@ -1,6 +1,6 @@
 # CertiFace backend en una VM de Oracle Cloud.
 #
-#   api   → la imagen de backend/Dockerfile (Redis + worker Celery + FastAPI).
+#   api   → la imagen de backend/Dockerfile: FastAPI, que también ejecuta los análisis.
 #   caddy → HTTPS automático (Let's Encrypt) delante de la API, en 80/443.
 #
 # Lo levanta deploy/oracle/setup.sh; para operarlo a mano, desde backend/:
@@ -16,11 +16,18 @@ services:
     env_file: ../../.env
     environment:
       PORT: "8000"
+      # La API analiza en su propio proceso: los modelos se cargan una sola vez (~7 GB).
+      # Con un worker serían dos copias y la VM de 12 GB se queda sin memoria al analizar video.
+      INFERENCE_MODE: local
       OMP_NUM_THREADS: "${THREADS:-4}"
       MKL_NUM_THREADS: "${THREADS:-4}"
     volumes:
       # Clave privada de firma de manifiestos (FORENSIC_SIGNING_KEY_PATH=./.secrets/...).
       - ../../.secrets:/home/user/app/.secrets:ro
+    # Si un análisis se pasa de memoria, el sistema reinicia solo este contenedor en vez de
+    # congelar toda la VM (SSH incluido). Deja ~1.6 GB al sistema y a Caddy.
+    mem_limit: "${API_MEMORY_LIMIT:-10g}"
+    memswap_limit: "${API_MEMORY_LIMIT:-10g}"
     expose:
       - "8000"
     healthcheck:

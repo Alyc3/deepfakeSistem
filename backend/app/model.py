@@ -136,20 +136,29 @@ def _verdict(p_fake: float):
 # (app.video_rule) fija cuántos encuadres se sondean como máximo.
 
 
-def _scene_probe(images):
+def _scene_probe(images, tokens=None):
     """Mediana de la sonda de escena sobre hasta SCENE_PROBES imágenes
-    repartidas. None si no hay imágenes."""
+    repartidas. None si no hay imágenes.
+
+    tokens: si se pasa un dict, guarda los tokens de cada imagen sondeada
+    (clave id(imagen)) para dibujar su mapa de calor sin repetir la sonda."""
     if not images:
         return None
     if len(images) > SCENE_PROBES:
         step = len(images) // SCENE_PROBES
         images = images[::step][:SCENE_PROBES]
-    scores = [scene_model.fake_probability(img) for img in images]
+    scores = []
+    for img in images:
+        probability, activations = scene_model.score(img)
+        scores.append(probability)
+        if tokens is not None:
+            tokens[id(img)] = activations
     return median(scores)
 
 
 def _resolve_reservation(
-    label, gan_signal, swap_signal, face_signal, context_images, min_eligible
+    label, gan_signal, swap_signal, face_signal, context_images, min_eligible,
+    tokens=None,
 ):
     """Resuelve una condena firmada solo por el detector de difusión.
 
@@ -177,7 +186,7 @@ def _resolve_reservation(
         return label, None, None, None
 
     if len(context_images) >= min_eligible:
-        ctx = _scene_probe(context_images)
+        ctx = _scene_probe(context_images, tokens)
         if ctx > SCENE_CONFIRM_LIMIT:
             outcome = "generación global (condena plena)"
         elif ctx < SCENE_CLEAN_LIMIT and face_signal < STRONG_FACE_LIMIT:
@@ -201,7 +210,7 @@ def _resolve_reservation(
     return "Suspect", CAVEAT_CLOSEUP, None, None
 
 
-def _verify_real(label, confidence, generation_signal, probe_images):
+def _verify_real(label, confidence, generation_signal, probe_images, tokens=None):
     """Verificación final de todo veredicto "Real" con la sonda de escena.
 
     Motivo, verificado empíricamente: los generadores más recientes pueden
@@ -224,7 +233,7 @@ def _verify_real(label, confidence, generation_signal, probe_images):
     if label != "Real":
         return label, confidence, None, None
 
-    scene = _scene_probe(probe_images) if probe_images else None
+    scene = _scene_probe(probe_images, tokens) if probe_images else None
 
     if scene is not None:
         if scene > SCENE_SOLO_LIMIT:
@@ -260,9 +269,13 @@ def predict_image(image_bytes: bytes):
             "(el veredicto pierde fiabilidad)", image.width, image.height,
         )
 
-    p_gan = _fake_probability(face)
-    p_swap = faceswap_model.fake_probability(face)
-    p_diff = diffusion_model.fake_probability(face)
+    # Los CAM faciales se capturan durante la propia inferencia, como en video:
+    # el mapa de calor no necesita una segunda pasada de los tres peritos.
+    with explain.capture_facial_cams() as capture:
+        p_gan = _fake_probability(face)
+        p_swap = faceswap_model.fake_probability(face)
+        p_diff = diffusion_model.fake_probability(face)
+        facial_cams = capture.snapshot(face.size)
     p_fake = max(p_gan, p_swap, p_diff)
     label, confidence = _verdict(p_fake)
 
@@ -270,8 +283,9 @@ def predict_image(image_bytes: bytes):
     context_images = (
         [image] if found and face_fraction <= CONTEXT_FACE_MAX_FRACTION else []
     )
+    scene_tokens = {}  # tokens de la sonda de escena, para su mapa de calor
     label, caveat, ctx, conf_override = _resolve_reservation(
-        label, p_gan, p_swap, p_diff, context_images, min_eligible=1
+        label, p_gan, p_swap, p_diff, context_images, min_eligible=1, tokens=scene_tokens
     )
     if conf_override is not None:
         confidence = conf_override
@@ -283,7 +297,7 @@ def predict_image(image_bytes: bytes):
         # cual: no distingue entorno, pero es la opinión de un modelo
         # independiente entrenado en otra distribución.
         label, confidence, caveat, ctx = _verify_real(
-            label, confidence, max(p_diff, p_gan), context_images or [image]
+            label, confidence, max(p_diff, p_gan), context_images or [image], scene_tokens
         )
     logger.info(
         "Imagen %dx%d: rostro=%s p_gan=%.4f p_swap=%.4f p_diff=%.4f → %s (%.2f%%)%s",
@@ -313,7 +327,10 @@ def predict_image(image_bytes: bytes):
     if ctx is not None:
         weights["scene_generated"] = ctx
     try:
-        explanation = explain.build_explanation(image, bbox, weights)
+        explanation = explain.build_explanation(
+            image, bbox, weights, facial_cams=facial_cams,
+            scene_tokens=scene_tokens.get(id(image)),
+        )
         if explanation:
             result["explanation"] = explanation
     except Exception:
@@ -323,11 +340,12 @@ def predict_image(image_bytes: bytes):
 
 SUSPECT_THRESHOLD = 0.6  # umbral para señalar un fotograma al perito
 
-def _video_scene_probes(frames, pool, scene_callback=None):
+def _video_scene_probes(frames, pool, scene_callback=None, tokens=None):
     """Sonda de escena sobre SCENE_PROBES fotogramas repartidos de `pool`.
 
     pool: índices de fotogramas candidatos. Mismo muestreo que _scene_probe.
-    Devuelve [(índice, puntuación)]; una sonda que falla se omite.
+    Devuelve [(índice, puntuación)]; una sonda que falla se omite. tokens: si
+    se pasa un dict, guarda los de cada fotograma sondeado (clave: índice).
     """
     picks = list(pool)
     if len(picks) > SCENE_PROBES:
@@ -337,7 +355,10 @@ def _video_scene_probes(frames, pool, scene_callback=None):
         if scene_callback:
             scene_callback(number, len(picks))
         try:
-            readings.append((index, scene_model.fake_probability(frames[index][0])))
+            probability, activations = scene_model.score(frames[index][0])
+            readings.append((index, probability))
+            if tokens is not None:
+                tokens[index] = activations
         except Exception:
             logger.exception("Falló la sonda de escena en el fotograma %d; se omite.", index + 1)
     return readings
@@ -395,7 +416,9 @@ def predict_video(frames, progress_callback=None, scene_callback=None):
     # Escena: se prefieren encuadres donde el rostro no domina; en un primer
     # plano se sondea el fotograma tal cual (no distingue entorno, pero es la
     # opinión de un modelo independiente).
-    readings = _video_scene_probes(frames, context_indices or range(len(frames)), scene_callback)
+    # El destacado suele ser un fotograma ya sondeado: su mapa reutiliza esos tokens.
+    scene_tokens = {}
+    readings = _video_scene_probes(frames, context_indices or range(len(frames)), scene_callback, scene_tokens)
     scene = median([score for _, score in readings]) if readings else None
 
     # GAN y difusión: mediana sobre los fotogramas con rostro. No condenan
@@ -461,7 +484,7 @@ def predict_video(frames, progress_callback=None, scene_callback=None):
     try:
         explanation = _video_explanation(
             frames, bboxes, frame_cams, frame_signal, found_flags, best_index,
-            featured_scene,
+            featured_scene, scene_tokens.get(best_index),
         )
         if explanation:
             result["explanation"] = explanation
@@ -477,7 +500,7 @@ def predict_video(frames, progress_callback=None, scene_callback=None):
 
 
 def _video_explanation(frames, bboxes, frame_cams, frame_signal, found_flags,
-                       best_index, scene):
+                       best_index, scene, scene_tokens=None):
     """Mapas de calor del video: uno por fotograma, más el destacado.
 
     Cada fotograma se colorea con el detector que decide fotograma a
@@ -511,6 +534,7 @@ def _video_explanation(frames, bboxes, frame_cams, frame_signal, found_flags,
     featured = explain.build_explanation(
         frames[best_index][0], bboxes[best_index], featured_weights,
         second=frames[best_index][1], facial_cams=frame_cams[best_index],
+        scene_tokens=scene_tokens,
     )
     if featured is None:
         return None

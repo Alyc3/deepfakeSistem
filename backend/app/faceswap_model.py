@@ -56,6 +56,7 @@ if _missing or _unexpected:
         "Carga de pesos DFDC con discrepancias — faltantes: %s, inesperadas: %s",
         _missing[:5], _unexpected[:5],
     )
+del _state  # los pesos ya están en el modelo: no retener otra copia (~255 MB) en memoria
 model = model.to(device)
 model.eval()
 logger.info("Detector de face swap (DFDC B7) cargado en %s", device)

@@ -90,10 +90,14 @@ def extract_frames(video_bytes: bytes, max_frames: int = 24):
         frames = []
         count = 0
         while len(frames) < max_frames:
-            ret, frame = cap.read()
-            if not ret:
+            # read() = grab() + retrieve(). Solo los fotogramas muestreados se
+            # recuperan y convierten; los demás se saltan con grab(), más barato.
+            if not cap.grab():
                 break
             if count % step == 0:
+                ret, frame = cap.retrieve()
+                if not ret:
+                    break
                 timestamp = round(count / fps, 1) if fps > 0 else None
                 frames.append(
                     (Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)), timestamp)
