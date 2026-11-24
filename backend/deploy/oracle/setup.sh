@@ -16,7 +16,7 @@ fail() { printf '\n\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
 # --- 0. Comprobaciones previas ------------------------------------------------
 [[ -f .env ]] || fail "Falta backend/.env (cópialo desde tu PC junto con el código)."
-[[ -f .secrets/manifest-signing.pem ]] || fail "Falta backend/.secrets/manifest-signing.pem (clave privada de firma)."
+sudo test -f .secrets/manifest-signing.pem || fail "Falta backend/.secrets/manifest-signing.pem (clave privada de firma)."
 [[ -f Dockerfile ]] || fail "Ejecuta el script desde la carpeta del backend."
 
 mem_gb=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
