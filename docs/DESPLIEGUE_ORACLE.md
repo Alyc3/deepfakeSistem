@@ -10,7 +10,7 @@ salen bien, se despliega en la VM.
 ```text
 git push (main) ──► GitHub Actions ──► pruebas ──► rsync por SSH ──► VM Oracle
                                                                      │
-                     Internet ──► Caddy (HTTPS 443) ──► API + worker + Redis (Docker)
+                     Internet ──► Caddy (HTTPS 443) ──► API con inferencia (Docker)
 ```
 
 | Archivo | Para qué sirve |
