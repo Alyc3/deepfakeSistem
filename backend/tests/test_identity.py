@@ -6,7 +6,7 @@ import httpx
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from app.identity import require_identity, require_laboratory
+from app.identity import require_laboratory
 from app.identity_routes import router
 
 USER = {"id": "remote-user", "email": "perito@example.test", "status": "ACTIVO", "role": {"id": "role-1", "name": "ADMINISTRADOR"}}

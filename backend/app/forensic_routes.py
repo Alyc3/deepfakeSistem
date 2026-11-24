@@ -10,6 +10,7 @@ from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy import func, or_
 
+from app.api_docs import AUTH_ERRORS, errors
 from app.auth_service import get_current_perito, record_audit_event
 from app.database import get_db
 from app.forensic_storage import get_storage
@@ -20,12 +21,18 @@ from app.tasks import analyze_evidence_task, run_analysis_job
 from app.report_pdf import build_forensic_pdf
 from app.identity import require_laboratory
 from app.models_db import AnalysisJob, AnalysisReport, CustodyAuditLog, Evidence, ForensicCase, StoredArtifact
-from app.schemas import CaseCreateSchema, FinalizeReportSchema
+from app.schemas import (AnalysisResult, ArchiveReceipt, ArtifactItem, CaseCreated, CaseCreateSchema, CaseList, CaseSummary,
+                         CustodyEvent, EvidenceItem, FinalizeReportSchema, IngestReceipt, JobQueued, JobStatus, StorageStatus)
 from app.storage.ports import IntegrityError, StorageError
 from app.storage.sealing import sha256
 from app.validators import sha256_or_none
 
-router = APIRouter(dependencies=[Depends(require_laboratory)], tags=["Custodia y archivo forense"])
+router = APIRouter(dependencies=[Depends(require_laboratory)], responses=errors(*AUTH_ERRORS))
+CASES, ANALYSIS, JOBS, ARCHIVE = "Expedientes", "Evidencias y análisis", "Trabajos de análisis", "Archivo forense"
+UPLOAD_ERRORS = (409, 413, 415, 422)
+EVIDENCE_FILE = "Imagen o video (JPEG, PNG, WebP, BMP, GIF, MP4, MOV, AVI, MKV o WebM)."
+EXPECTED_SHA256 = "Huella SHA-256 calculada en el cliente (64 caracteres hexadecimales). Si no coincide, se rechaza con 409."
+EVIDENCE_ID = "Evidencia ya subida al expediente. Alternativa a `file`."
 logger = logging.getLogger("certiface.forensics")
 
 
@@ -120,8 +127,12 @@ async def queue_analysis(db, case, evidence, perito, request):
             "poll_after_ms": 2000, "mode": mode}
 
 
-@router.post("/api/v1/cases", status_code=201)
+@router.post("/api/v1/cases", status_code=201, tags=[CASES], summary="Crear expediente",
+             responses={201: {"model": CaseCreated, "description": "Expediente creado."}, **errors(409, 422)})
 async def create_case(case_data: CaseCreateSchema, request: Request, perito=Depends(get_current_perito), db=Depends(get_db)):
+    """Abre un expediente a nombre del perito autenticado y lo registra en la bitácora de custodia.
+    Devuelve `409` si el número de expediente ya existe.
+    """
     if db.query(ForensicCase).filter(ForensicCase.case_number == case_data.case_number).first():
         raise HTTPException(409, "El número de expediente ya existe")
     case = ForensicCase(id=uuid.uuid4(), case_number=case_data.case_number, title=case_data.title, description=case_data.description, perito_id=perito.id)
@@ -135,10 +146,15 @@ def _like(term: str) -> str:
     return "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
-@router.get("/api/v1/cases")
-async def list_cases(q: Optional[str] = Query(None, max_length=100), offset: int = Query(0, ge=0, le=100_000),
-                     limit: int = Query(10, ge=1, le=50), perito=Depends(get_current_perito), db=Depends(get_db)):
-    """Expedientes del perito, paginados y con un resumen de cada uno (evidencias y último dictamen)."""
+@router.get("/api/v1/cases", tags=[CASES], summary="Listar expedientes",
+            responses={200: {"model": CaseList, "description": "Página de expedientes, del más reciente al más antiguo."}, **errors(422)})
+async def list_cases(q: Optional[str] = Query(None, max_length=100, description="Texto a buscar en el número o el nombre del expediente."), offset: int = Query(0, ge=0, le=100_000, description="Expedientes que se saltan (paginación)."),
+                     limit: int = Query(10, ge=1, le=50, description="Expedientes por página (1 a 50)."), perito=Depends(get_current_perito), db=Depends(get_db)):
+    """Expedientes del perito, paginados, con el número de evidencias y el último veredicto de cada uno.
+
+    - `q`: busca en el número y el nombre del expediente (sin distinguir mayúsculas).
+    - `offset` y `limit`: paginación (máximo 50 por página).
+    """
     def load():
         query = db.query(ForensicCase).filter(ForensicCase.perito_id == perito.id)
         term = (q or "").strip()
@@ -164,15 +180,27 @@ async def list_cases(q: Optional[str] = Query(None, max_length=100), offset: int
     return await run_in_threadpool(load)
 
 
-@router.post("/api/v1/cases/{case_id}/ingest", status_code=201)
-async def ingest_case(case_id: uuid.UUID, request: Request, file: UploadFile = File(...), expected_sha256: Optional[str] = Form(None), perito=Depends(get_current_perito), db=Depends(get_db)):
+@router.post("/api/v1/cases/{case_id}/ingest", status_code=201, tags=[ANALYSIS], summary="Subir evidencia",
+             responses={201: {"model": IngestReceipt, "description": "Evidencia preservada y verificada."}, **errors(404, *UPLOAD_ERRORS)})
+async def ingest_case(case_id: uuid.UUID, request: Request, file: UploadFile = File(..., description=EVIDENCE_FILE), expected_sha256: Optional[str] = Form(None, description=EXPECTED_SHA256), perito=Depends(get_current_perito), db=Depends(get_db)):
+    """Recibe una imagen o un video (`multipart/form-data`) y lo preserva: cifra y sella el original y una
+    copia de trabajo, comprueba que ambas huellas coincidan y lo anota en la bitácora.
+
+    Si se envía `expected_sha256` (la huella calculada en el cliente), la API rechaza con `409` un archivo que
+    no coincida, lo que demuestra que no se alteró en el camino. No analiza: para eso está `analyze-async`.
+    """
     case = await run_in_threadpool(owned_case, db, case_id, perito)
     evidence, rows = await ingest(db, case, perito, request, file, expected_sha256)
     return {**receipt(case, evidence, None, rows), "sha256_original": evidence.sha256_original, "sha256_working_copy": evidence.sha256_working_copy, "status": "PRESERVED_AND_VERIFIED"}
 
 
-@router.post("/api/v1/cases/{case_id}/analyze")
-async def analyze_case(case_id: uuid.UUID, request: Request, evidence_id: Optional[uuid.UUID] = Form(None), file: Optional[UploadFile] = File(None), expected_sha256: Optional[str] = Form(None), perito=Depends(get_current_perito), db=Depends(get_db)):
+@router.post("/api/v1/cases/{case_id}/analyze", tags=[ANALYSIS], summary="Analizar y esperar el resultado",
+             responses={200: {"model": AnalysisResult, "description": "Análisis completado y archivado."}, **errors(400, 404, *UPLOAD_ERRORS)})
+async def analyze_case(case_id: uuid.UUID, request: Request, evidence_id: Optional[uuid.UUID] = Form(None, description=EVIDENCE_ID), file: Optional[UploadFile] = File(None, description=EVIDENCE_FILE), expected_sha256: Optional[str] = Form(None, description=EXPECTED_SHA256), perito=Depends(get_current_perito), db=Depends(get_db)):
+    """Analiza una evidencia y espera el resultado en la misma solicitud (en video puede tardar varios minutos).
+    Envía `evidence_id` para una evidencia ya subida o `file` para subirla y analizarla a la vez.
+    Para clientes interactivos es preferible `analyze-async`.
+    """
     case = await run_in_threadpool(owned_case, db, case_id, perito)
     if file is not None:
         evidence, _ = await ingest(db, case, perito, request, file, expected_sha256)
@@ -185,8 +213,15 @@ async def analyze_case(case_id: uuid.UUID, request: Request, evidence_id: Option
     return await analyze(db, case, evidence, perito, request)
 
 
-@router.post("/api/v1/cases/{case_id}/analyze-async", status_code=202)
-async def analyze_case_async(case_id: uuid.UUID, request: Request, evidence_id: Optional[uuid.UUID] = Form(None), file: Optional[UploadFile] = File(None), expected_sha256: Optional[str] = Form(None), perito=Depends(get_current_perito), db=Depends(get_db)):
+@router.post("/api/v1/cases/{case_id}/analyze-async", status_code=202, tags=[ANALYSIS], summary="Encolar análisis",
+             responses={202: {"model": JobQueued, "description": "Análisis encolado."}, **errors(400, 404, *UPLOAD_ERRORS)})
+async def analyze_case_async(case_id: uuid.UUID, request: Request, evidence_id: Optional[uuid.UUID] = Form(None, description=EVIDENCE_ID), file: Optional[UploadFile] = File(None, description=EVIDENCE_FILE), expected_sha256: Optional[str] = Form(None, description=EXPECTED_SHA256), perito=Depends(get_current_perito), db=Depends(get_db)):
+    """Encola el análisis y responde de inmediato con un `job_id`. Envía `evidence_id` para una evidencia ya
+    subida o `file` (con `expected_sha256` opcional) para subirla y analizarla a la vez.
+
+    Lo ejecuta el worker de Celery o, si no hay ninguno, la propia API (`mode`). Al terminar quedan archivados
+    el resultado JSON, los mapas de calor y un informe PDF preliminar.
+    """
     case = await run_in_threadpool(owned_case, db, case_id, perito)
     if file is not None:
         evidence, _ = await ingest(db, case, perito, request, file, expected_sha256)
@@ -199,9 +234,12 @@ async def analyze_case_async(case_id: uuid.UUID, request: Request, evidence_id: 
     return await queue_analysis(db, case, evidence, perito, request)
 
 
-@router.post("/predict")
-async def preserved_prediction(request: Request, file: UploadFile = File(...), expected_sha256: Optional[str] = Form(None), perito=Depends(get_current_perito), db=Depends(get_db)):
-    """Compatibilidad con la web: preserva y encola la inferencia."""
+@router.post("/predict", tags=[ANALYSIS], summary="Análisis rápido sin expediente previo",
+             responses={200: {"model": JobQueued, "description": "Evidencia preservada y análisis encolado."}, **errors(*UPLOAD_ERRORS)})
+async def preserved_prediction(request: Request, file: UploadFile = File(..., description=EVIDENCE_FILE), expected_sha256: Optional[str] = Form(None, description=EXPECTED_SHA256), perito=Depends(get_current_perito), db=Depends(get_db)):
+    """Atajo del laboratorio de la web: crea un expediente automático (`CF-<fecha>-<id>`), preserva el
+    archivo y encola su análisis en un solo paso. El resultado se consulta igual que en `analyze-async`.
+    """
     expected_sha256 = sha256_or_none(expected_sha256)  # antes de crear el expediente
     get_storage().retention.check()
     case_id = uuid.uuid4()
@@ -214,8 +252,14 @@ async def preserved_prediction(request: Request, file: UploadFile = File(...), e
     return queued
 
 
-@router.get("/api/v1/jobs/{job_id}")
+@router.get("/api/v1/jobs/{job_id}", tags=[JOBS], summary="Estado de un análisis",
+            responses={200: {"model": JobStatus, "description": "Estado actual del trabajo."}, **errors(404)})
 async def analysis_job(job_id: uuid.UUID, perito=Depends(get_current_perito), db=Depends(get_db)):
+    """Devuelve `queued` o `processing` con el progreso por etapas mientras el análisis avanza, `completed`
+    con el resultado o `failed` con el motivo. Consulta de nuevo tras `poll_after_ms` milisegundos.
+
+    Si el servidor se reinició a mitad de un análisis, el trabajo pasa a `failed` y hay que volver a encolarlo.
+    """
     job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id, AnalysisJob.perito_id == perito.id).first()
     if not job:
         raise HTTPException(404, "Trabajo no encontrado")
@@ -263,24 +307,34 @@ async def analysis_job(job_id: uuid.UUID, perito=Depends(get_current_perito), db
     return {"status": job.status.lower(), "job_id": str(job_id), "poll_after_ms": 2000, "progress": progress}
 
 
-@router.get("/api/v1/cases/{case_id}/evidences")
+@router.get("/api/v1/cases/{case_id}/evidences", tags=[CASES], summary="Evidencias del expediente",
+            responses={200: {"model": list[EvidenceItem], "description": "Hasta 200 evidencias, de la más reciente a la más antigua."}, **errors(404)})
 async def list_evidence(case_id: uuid.UUID, perito=Depends(get_current_perito), db=Depends(get_db)):
+    """Lista las evidencias subidas al expediente con su huella SHA-256 y su tamaño."""
     case = await run_in_threadpool(owned_case, db, case_id, perito)
     evidence = db.query(Evidence).filter(Evidence.case_id == case.id).order_by(Evidence.uploaded_at.desc()).limit(200).all()
     return [{"id": str(item.id), "file_name": item.file_name, "sha256": item.sha256_original, "size_bytes": item.file_size_bytes, "uploaded_at": item.uploaded_at.isoformat()} for item in evidence]
 
 
-@router.get("/api/v1/cases/{case_id}/artifacts")
+@router.get("/api/v1/cases/{case_id}/artifacts", tags=[ARCHIVE], summary="Objetos archivados del expediente",
+            responses={200: {"model": list[ArtifactItem], "description": "Hasta 500 objetos, del más reciente al más antiguo."}, **errors(404)})
 async def list_artifacts(case_id: uuid.UUID, perito=Depends(get_current_perito), db=Depends(get_db)):
+    """Lista los objetos cifrados del expediente (originales, copias de trabajo, resultados JSON, informes
+    PDF y mapas de calor) con su huella SHA-256. Cada `id` se descarga con `.../artifacts/{artifact_id}/download`.
+    """
     case = await run_in_threadpool(owned_case, db, case_id, perito)
     artifacts = db.query(StoredArtifact).filter(StoredArtifact.case_id == case.id, StoredArtifact.owner_id == perito.id).order_by(StoredArtifact.created_at.desc()).limit(500).all()
     return [{"id": str(row.id), "evidence_id": str(row.evidence_id), "report_id": str(row.report_id) if row.report_id else None,
              "kind": row.kind, "sha256": row.sha256, "size_bytes": row.size_bytes, "created_at": row.created_at.isoformat()} for row in artifacts]
 
 
-@router.get("/api/v1/cases/{case_id}/summary")
+@router.get("/api/v1/cases/{case_id}/summary", tags=[CASES], summary="Resumen completo del expediente",
+            responses={200: {"model": CaseSummary, "description": "Expediente con evidencias, dictámenes y custodia."}, **errors(404)})
 async def case_summary(case_id: uuid.UUID, perito=Depends(get_current_perito), db=Depends(get_db)):
-    """Vista de lectura para expedientes: dictamen, PDF, láminas y trazabilidad."""
+    """Reúne en una sola respuesta cada evidencia con su último dictamen (veredicto, confianza, mapas de
+    calor y PDF) y la cadena de custodia del expediente. Antes de mostrar cada objeto verifica su firma. Si el
+    almacén no responde, devuelve los datos de PostgreSQL y lo indica en `artifact_issue`.
+    """
     case = await run_in_threadpool(owned_case, db, case_id, perito)
     evidence_rows = db.query(Evidence).filter(Evidence.case_id == case.id).order_by(Evidence.uploaded_at.desc()).limit(200).all()
     output = []
@@ -359,8 +413,16 @@ async def case_summary(case_id: uuid.UUID, perito=Depends(get_current_perito), d
                                              "hash_verified": row.hash_verified} for row in logs]}
 
 
-@router.get("/api/v1/cases/{case_id}/artifacts/{artifact_id}/download")
+@router.get("/api/v1/cases/{case_id}/artifacts/{artifact_id}/download", tags=[ARCHIVE], summary="Descargar un objeto archivado",
+            responses={200: {"description": "El archivo descifrado. La cabecera `X-Content-SHA256` lleva su huella.",
+                             "content": {"application/pdf": {}, "application/json": {}, "image/jpeg": {}, "video/mp4": {}}},
+                       **errors(404, 409)})
 async def download_artifact(case_id: uuid.UUID, artifact_id: uuid.UUID, request: Request, perito=Depends(get_current_perito), db=Depends(get_db)):
+    """Verifica la firma y la huella del objeto, lo descifra y lo entrega como adjunto. Cada descarga queda
+    en la bitácora de custodia. Responde `409` si el objeto no supera la verificación de integridad.
+
+    La evidencia original (`kind = original`) solo la pueden descargar los roles de administración.
+    """
     case = await run_in_threadpool(owned_case, db, case_id, perito)
     row = db.query(StoredArtifact).filter(StoredArtifact.id == artifact_id, StoredArtifact.case_id == case.id, StoredArtifact.owner_id == perito.id).first()
     if not row:
@@ -382,8 +444,13 @@ async def download_artifact(case_id: uuid.UUID, artifact_id: uuid.UUID, request:
         "Cache-Control": "no-store, private", "Pragma": "no-cache", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox; default-src 'none'", "X-Content-SHA256": row.sha256})
 
 
-@router.post("/api/v1/cases/{case_id}/reports/{report_id}/finalize", status_code=201)
+@router.post("/api/v1/cases/{case_id}/reports/{report_id}/finalize", status_code=201, tags=[ARCHIVE], summary="Emitir el informe definitivo",
+             responses={201: {"model": ArchiveReceipt, "description": "Nueva versión del informe archivada."}, **errors(404, 409, 422)})
 async def finalize_report(case_id: uuid.UUID, report_id: uuid.UUID, body: FinalizeReportSchema, request: Request, perito=Depends(get_current_perito), db=Depends(get_db)):
+    """Añade las conclusiones del perito al dictamen y genera un nuevo informe PDF con los mapas de calor y
+    la cadena de custodia. La versión anterior no se borra: la nueva queda sellada y enlazada a ella, y el
+    `pdf_artifact_id` del resumen pasa a apuntar al PDF nuevo.
+    """
     case = await run_in_threadpool(owned_case, db, case_id, perito)
     report = db.query(AnalysisReport).filter(AnalysisReport.id == report_id, AnalysisReport.perito_id == perito.id).first()
     row = db.query(StoredArtifact).filter(StoredArtifact.case_id == case.id, StoredArtifact.report_id == report_id, StoredArtifact.kind == "report").order_by(StoredArtifact.created_at.desc()).first()
@@ -416,16 +483,22 @@ async def finalize_report(case_id: uuid.UUID, report_id: uuid.UUID, body: Finali
     return receipt(case, evidence, report, rows)
 
 
-@router.get("/api/v1/cases/{case_id}/custody-log")
+@router.get("/api/v1/cases/{case_id}/custody-log", tags=[ARCHIVE], summary="Bitácora de custodia",
+            responses={200: {"model": list[CustodyEvent], "description": "Hasta 500 eventos, del más reciente al más antiguo."}, **errors(404)})
 async def custody_log(case_id: uuid.UUID, perito=Depends(get_current_perito), db=Depends(get_db)):
+    """Registro de cada acción sobre el expediente y sus evidencias (creación, ingesta, análisis, descargas e
+    informes) con la verificación de huella y los detalles de cada evento.
+    """
     case = await run_in_threadpool(owned_case, db, case_id, perito)
     ids = [item.id for item in db.query(Evidence).filter(Evidence.case_id == case.id).all()]
     logs = db.query(CustodyAuditLog).filter(CustodyAuditLog.perito_id == perito.id, or_(CustodyAuditLog.evidence_id.in_(ids), CustodyAuditLog.details["case_id"].astext == str(case.id))).order_by(CustodyAuditLog.timestamp.desc()).limit(500).all()
     return [{"id": row.id, "action": row.action, "hash_verified": row.hash_verified, "details": row.details, "timestamp": row.timestamp.isoformat()} for row in logs]
 
 
-@router.get("/api/v1/storage/status")
+@router.get("/api/v1/storage/status", tags=[ARCHIVE], summary="Estado del almacén forense",
+            responses={200: {"model": StorageStatus, "description": "El almacén responde y la retención está activa."}})
 async def storage_status():
+    """Comprueba que el almacén de objetos responde y que la retención inmutable sigue activa."""
     storage = get_storage()
     await run_in_threadpool(storage.store.check)
     retention = await run_in_threadpool(storage.retention.check)

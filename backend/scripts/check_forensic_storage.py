@@ -7,7 +7,6 @@ from botocore.exceptions import ClientError
 
 from app.forensic_storage import ForensicStorage, get_storage
 from app.storage.adapters import S3ObjectStore
-from app.storage.ports import WriteConflict
 from app.storage.sealing import canonical_json, sha256
 
 

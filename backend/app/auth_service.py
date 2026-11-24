@@ -4,22 +4,18 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 import httpx
-from fastapi import Depends, HTTPException, Security, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Depends
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.identity import require_identity
 from app.models_db import CustodyAuditLog, Perito
 
 logger = logging.getLogger("certiface.auth")
 
 AUTH_SERVICE_URL = os.environ["AUTH_SERVICE_URL"]
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
-
-security = HTTPBearer(auto_error=False)
-
-from app.identity import active_profile, bearer_token, require_identity
-from starlette.concurrency import run_in_threadpool
 
 
 def sync_perito_in_db(user_data: Dict[str, Any], db: Session) -> Perito:

@@ -1,5 +1,4 @@
 import base64
-import io
 import json
 import os
 import tempfile
@@ -17,9 +16,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from app.forensic_storage import ForensicStorage
 from app.storage.adapters import LocalObjectStore, S3ObjectStore
 from app.storage.config import StorageConfig
-from app.storage.ports import Artifact, IntegrityError, RetentionNotVerified, WriteConflict
+from app.storage.ports import IntegrityError, RetentionNotVerified, WriteConflict
 from app.storage.retention import RetentionGuard
-from app.storage.sealing import Sealer, canonical_json, public_id, sha256
+from app.storage.sealing import Sealer, sha256
 
 
 class StorageTests(unittest.TestCase):

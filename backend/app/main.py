@@ -5,7 +5,6 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -36,22 +35,30 @@ if _missing_weights and os.getenv("AUTO_DOWNLOAD_MODELS", "false").lower() == "t
 elif _missing_weights:
     raise RuntimeError("Faltan pesos de inferencia. Ejecuta: python scripts/fetch_models.py")
 
+from app.api_docs import API_DESCRIPTION, AUTH_ERRORS, TAGS, errors
 from app.auth_service import get_current_perito
 from app.identity_routes import router as identity_router
 from app.database import get_db
 from app.forensic_routes import router as forensic_router
 from app.forensic_storage import get_storage
 from app.storage.ports import StorageError, IntegrityError, WriteConflict
-from app import model as _inference_models  # precarga los modelos antes de aceptar solicitudes
+from app import model as _inference_models  # noqa: F401 — precarga los modelos antes de aceptar solicitudes
 from app.models_db import Perito
+from app.schemas import LiveStatus, PeritoProfile, ReadyStatus
 from app.validators import install_validation_handler
 
 logger = logging.getLogger("certiface.api")
+API_VERSION = "2.0.0"
 
 app = FastAPI(
-    title="CertiFace API — Plataforma de Peritaje Forense Digital",
-    version="2.0.0",
-    description="Sistema pericial forense para detección de deepfakes, preservación ISO/IEC 27037 y emisión de dictámenes.",
+    title="CertiFace API",
+    version=API_VERSION,
+    summary="Motor forense para detectar deepfakes con cadena de custodia y dictamen pericial firmado.",
+    description=API_DESCRIPTION,
+    openapi_tags=TAGS,
+    # Documentación con ReDoc en /docs; Swagger UI desactivado.
+    docs_url=None,
+    redoc_url="/docs",
 )
 
 
@@ -104,15 +111,20 @@ async def database_error_handler(request: Request, error: SQLAlchemyError):
     return JSONResponse({"detail": "La base de datos no está disponible; no se confirmó la operación."}, status_code=503, headers={"Cache-Control": "no-store"})
 
 
-@app.get("/health/live")
+@app.get("/health/live", tags=["Estado del servicio"], summary="El proceso está vivo",
+         responses={200: {"model": LiveStatus, "description": "La API está en marcha y los modelos cargados."}})
 def liveness_check():
+    """Responde en cuanto la API arrancó y cargó los modelos. No consulta servicios externos,
+    así que es la comprobación adecuada para el healthcheck de Docker y para el pipeline de despliegue."""
     return {"status": "ok", "service": "CertiFace Forensic API", "models": "loaded"}
 
 
-@app.get("/health/ready")
-@app.get("/")
+@app.get("/health/ready", tags=["Estado del servicio"], summary="La API puede atender solicitudes",
+         responses={200: {"model": ReadyStatus, "description": "PostgreSQL y el almacén forense responden."}, **errors(409, 503)})
+@app.get("/", include_in_schema=False)
 def health_check(db: Session = Depends(get_db)):
-    """Verifica el estado del API y la conectividad con Neon PostgreSQL."""
+    """Comprueba la conexión con PostgreSQL, el acceso al almacén de objetos y que la retención
+    inmutable siga activa. Devuelve `503` si alguno falla."""
     try:
         db.execute(text("SELECT 1"))
         db_status = "connected (Neon PostgreSQL 16)"
@@ -127,20 +139,15 @@ def health_check(db: Session = Depends(get_db)):
         "service": "CertiFace Forensic API",
         "storage": {"encrypted": True, "retention_verified": retention["verified"]},
         "database": db_status,
-        "version": "2.0.0",
+        "version": API_VERSION,
     }
 
 
-# ==========================================
-# RUTAS DE AUTENTICACIÓN Y PERFIL DE PERITO
-# ==========================================
-
-
-@app.get("/api/v1/auth/profile", response_model=Dict[str, Any])
-async def get_perito_profile(
-    perito: Perito = Depends(get_current_perito),
-):
-    """Devuelve los datos del perito autenticado a través del microservicio de autenticación central."""
+@app.get("/api/v1/auth/profile", tags=["Autenticación"], summary="Perfil del perito autenticado",
+         responses={200: {"model": PeritoProfile, "description": "Perfil sincronizado."}, **errors(*AUTH_ERRORS)})
+async def get_perito_profile(perito: Perito = Depends(get_current_perito)):
+    """Valida el token en el auth-service, sincroniza la cuenta en la tabla local de peritos
+    y devuelve el perfil. Es el registro al que se asocian expedientes y bitácora de custodia."""
     return {
         "id": str(perito.id),
         "external_auth_id": perito.external_auth_id,

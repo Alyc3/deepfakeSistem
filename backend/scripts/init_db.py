@@ -10,7 +10,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.schema import CreateTable, CreateIndex
 from sqlalchemy.dialects import postgresql
 from app.database import Base, engine, DATABASE_URL, database_url
-from app import models_db  # registra los modelos en Base.metadata
+from app import models_db  # noqa: F401 — registra los modelos en Base.metadata
 
 
 def initialize_database():

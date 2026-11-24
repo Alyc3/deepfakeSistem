@@ -1,4 +1,4 @@
-# Blueprint de Render para CertiFace web (New > Blueprint). El backend aún no se despliega aquí.
+# Blueprint de Render para CertiFace web (New > Blueprint). El backend está en Oracle Cloud (docs/DESPLIEGUE_ORACLE.md).
 # Los valores secretos (sync: false) se piden al crear el servicio: cópialos de web/.env.production.
 services:
   - type: web
@@ -19,6 +19,8 @@ services:
         value: https://authentication-service.fastapicloud.dev
       - key: AUTH_INTERNAL_API_KEY
         sync: false
+      - key: CERTIFACE_API_URL
+        value: https://157-151-202-23.sslip.io
       - key: FORENSICS_API_OVERRIDE
         value: "true"
       - key: FORENSICS_API_OVERRIDE_HOSTS

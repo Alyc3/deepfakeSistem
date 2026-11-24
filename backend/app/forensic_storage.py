@@ -12,10 +12,6 @@ from app.storage.ports import Artifact, IntegrityError, ObjectStore, StorageErro
 from app.storage.retention import RetentionGuard
 from app.storage.sealing import Sealer, canonical_json, sha256
 
-ForensicIntegrityError = IntegrityError
-calculate_sha256 = sha256
-
-
 def identifier(value) -> str:
     try:
         return str(uuid.UUID(str(value)))
@@ -44,7 +40,7 @@ class ForensicStorage:
         if len(data) > self.config.max_object:
             raise StorageError("Objeto demasiado grande para el almacén")
         digest = sha256(data)
-        uri = self.store.put_once(key, self.sealer.encrypt(data, key))
+        uri =self.store.put_once(key, self.sealer.encrypt(data, key))
         artifact = Artifact(kind, uri, digest, len(data), content_type)
         self.read(artifact)  # verificación desde los bytes realmente persistidos
         return artifact
@@ -81,7 +77,6 @@ class ForensicStorage:
         retention = self.retention.check()  # antes de cualquier escritura
         case_id, evidence_id = identifier(case_id), identifier(evidence_id)
         root = f"{self.config.prefix}/cases/{case_id}/evidence/{evidence_id}"
-        digest = sha256(data)
         original = self._write("original", f"{root}/original/evidence.bin.enc", data, content_type)
         recovered = self.read(original)
         working = self._write("working", f"{root}/working/copy.bin.enc", recovered, content_type)

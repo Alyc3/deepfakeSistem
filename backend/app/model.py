@@ -59,7 +59,6 @@ CORROBORATION_LIMIT = 0.3
 # encuadre (si lo ocupa casi todo, rostro y encuadre son lo mismo y no se
 # puede separar filtro de generación).
 CONTEXT_FACE_MAX_FRACTION = 0.5
-CONTEXT_MIN_FRAMES = 6
 
 CAVEAT_LOCALIZED = (
     "Firma de generación fuerte en el rostro pero no en el resto del "

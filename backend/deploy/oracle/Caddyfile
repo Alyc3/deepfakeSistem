@@ -1,0 +1,18 @@
+# HTTPS automático para la API. DOMAIN lo fija setup.sh: por defecto
+# <ip-con-guiones>.sslip.io, un nombre gratuito que apunta a la IP pública
+# de la VM y con el que Let's Encrypt puede emitir el certificado.
+{$DOMAIN} {
+	encode gzip
+
+	# Margen sobre FORENSIC_MAX_UPLOAD_BYTES (10 MB): la API aplica el límite real.
+	request_body {
+		max_size 32MB
+	}
+
+	reverse_proxy api:8000
+
+	log {
+		output stdout
+		format console
+	}
+}
